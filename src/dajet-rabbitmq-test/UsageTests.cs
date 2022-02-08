@@ -14,8 +14,7 @@ namespace DaJet.RabbitMQ.Test
         private const string OUTGOING_QUEUE_NAME = "РегистрСведений.ИсходящаяОчередь2";
         private const string MS_CONNECTION_STRING = "Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True";
 
-        [TestMethod]
-        public void TestRmqMessageProducer()
+        [TestMethod] public void TestRmqMessageProducer()
         {
             Stopwatch watch = new Stopwatch();
             watch.Start();
@@ -29,18 +28,15 @@ namespace DaJet.RabbitMQ.Test
                 return;
             }
 
+            //TODO: validate database interface version, cash InfoBase and queue metadata
+
             ApplicationObject queue = infoBase.GetApplicationObjectByName(OUTGOING_QUEUE_NAME);
 
-            EntityDataMapper mapper = new EntityDataMapper();
-            mapper.Configure(new DataMapperOptions()
-            {
-                InfoBase = infoBase,
-                MetadataName = "Справочник.ВерсионируемыйСправочник",
-                ConnectionString = MS_CONNECTION_STRING
-            });
-            EntityJsonSerializer serializer = new EntityJsonSerializer(mapper);
+            EntityDataMapperProvider provider = new EntityDataMapperProvider(infoBase, DatabaseProvider.SQLServer, MS_CONNECTION_STRING);
 
-            string routingKey = "dajet-queue"; // "Справочник.Номенклатура";
+            EntityJsonSerializer serializer = new EntityJsonSerializer(provider);
+
+            string routingKey = "dajet-queue"; // TODO: MessageType "Справочник.Номенклатура";
             string uri = "amqp://guest:guest@localhost:5672"; // /%2F /dajet-exchange
 
             using (IMessageConsumer consumer = new MsMessageConsumer(MS_CONNECTION_STRING, in queue))

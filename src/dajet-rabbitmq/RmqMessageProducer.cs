@@ -3,6 +3,7 @@ using DaJet.Json;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Text;
 using System.Web;
@@ -255,17 +256,32 @@ namespace DaJet.RabbitMQ
 
                     Properties.Type = message.MessageType;
                     Properties.MessageId = Guid.NewGuid().ToString();
-                    
-                    ReadOnlyMemory<byte> messageBody = message.GetMessageBody();
+
+                    byte[] buffer = ArrayPool<byte>.Shared.Rent(message.MessageBody.Length * 2);
+
+                    int encoded = Encoding.UTF8.GetBytes(message.MessageBody, 0, message.MessageBody.Length, buffer, 0);
+
+                    ReadOnlyMemory<byte> messageBody = new ReadOnlyMemory<byte>(buffer, 0, encoded);
+
+                    //FIXME: incorrect ArrayPool usage inside GetMessageBody method !!!
+                    //ReadOnlyMemory<byte> messageBody = message.GetMessageBody(); 
+
                     if (messageBody.IsEmpty)
                     {
                         if (message is Data.Messaging.V3.OutgoingMessage msg)
                         {
-                            messageBody = serializer.Serialize(msg.Reference);
+                            messageBody = serializer.Serialize(message.MessageType, msg.Reference);
+
+                            if (messageBody.IsEmpty)
+                            {
+                                messageBody = serializer.SerializeAsObjectDeletion(message.MessageType, msg.Reference);
+                            }
                         }
                     }
 
                     Channel.BasicPublish(ExchangeName, RoutingKey, Properties, messageBody);
+
+                    ArrayPool<byte>.Shared.Return(buffer);
 
                     produced++;
                 }
@@ -285,5 +301,62 @@ namespace DaJet.RabbitMQ
 
             return produced;
         }
+
+        //private void ConfigureMessageProperties(DatabaseMessage message, IBasicProperties properties)
+        //{
+        //    properties.AppId = message.Sender;
+        //    properties.Type = message.MessageType;
+        //    properties.MessageId = message.Uuid.ToString();
+
+        //    if (properties.Headers == null)
+        //    {
+        //        properties.Headers = new Dictionary<string, object>();
+        //    }
+        //    else
+        //    {
+        //        properties.Headers.Clear();
+        //    }
+
+        //    SetOperationTypeHeader(message, properties);
+
+        //    if (Settings.MessageBrokerSettings.ExchangeRole == 0)
+        //    {
+        //        SetAggregatorCopyHeader(message, properties);
+        //    }
+        //    else
+        //    {
+        //        SetDispatcherCopyHeader(message, properties);
+        //    }
+        //}
+        //private void SetOperationTypeHeader(DatabaseMessage message, IBasicProperties properties)
+        //{
+        //    if (string.IsNullOrWhiteSpace(message.OperationType)) return;
+
+        //    if (properties.Headers == null)
+        //    {
+        //        properties.Headers = new Dictionary<string, object>();
+        //    }
+
+        //    if (!properties.Headers.TryAdd("OperationType", message.OperationType))
+        //    {
+        //        properties.Headers["OperationType"] = message.OperationType;
+        //    }
+        //}
+        //private void SetAggregatorCopyHeader(DatabaseMessage message, IBasicProperties properties)
+        //{
+        //    if (string.IsNullOrWhiteSpace(message.Sender)) return;
+
+        //    string header = (Settings.MessageBrokerSettings.CopyType == 0 ? "CC" : "BCC");
+
+        //    properties.Headers.Add(header, new string[] { message.Sender });
+        //}
+        //private void SetDispatcherCopyHeader(DatabaseMessage message, IBasicProperties properties)
+        //{
+        //    if (string.IsNullOrWhiteSpace(message.Recipients)) return;
+
+        //    string header = (Settings.MessageBrokerSettings.CopyType == 0 ? "CC" : "BCC");
+
+        //    properties.Headers.Add(header, message.Recipients.Split(',', StringSplitOptions.RemoveEmptyEntries));
+        //}
     }
 }

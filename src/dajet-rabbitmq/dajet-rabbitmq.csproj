@@ -15,8 +15,8 @@ Microsoft SQL Server and PostgreSQL are supported.</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="DaJet.Data.Mapping" Version="3.2.5" />
-    <PackageReference Include="DaJet.Data.Messaging" Version="3.0.1" />
+    <PackageReference Include="DaJet.Data.Mapping" Version="3.3.0" />
+    <PackageReference Include="DaJet.Data.Messaging" Version="3.0.2" />
     <PackageReference Include="RabbitMQ.Client" Version="6.2.2" />
   </ItemGroup>
 
