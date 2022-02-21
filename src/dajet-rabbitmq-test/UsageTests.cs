@@ -5,13 +5,14 @@ using DaJet.Metadata;
 using DaJet.Metadata.Model;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 
 namespace DaJet.RabbitMQ.Test
 {
     [TestClass] public class UsageTests
     {
-        private const string OUTGOING_QUEUE_NAME = "РегистрСведений.ИсходящаяОчередь2";
+        private const string OUTGOING_QUEUE_NAME = "РегистрСведений.ИсходящаяОчередь11";
         private const string MS_CONNECTION_STRING = "Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True";
 
         [TestMethod] public void TestRmqMessageProducer()
@@ -20,31 +21,44 @@ namespace DaJet.RabbitMQ.Test
             watch.Start();
 
             if (!new MetadataService()
-                .UseDatabaseProvider(DatabaseProvider.SQLServer)
                 .UseConnectionString(MS_CONNECTION_STRING)
+                .UseDatabaseProvider(DatabaseProvider.SQLServer)
                 .TryOpenInfoBase(out InfoBase infoBase, out string error))
             {
                 Console.WriteLine(error);
                 return;
             }
-
-            //TODO: validate database interface version, cash InfoBase and queue metadata
-
+            
             ApplicationObject queue = infoBase.GetApplicationObjectByName(OUTGOING_QUEUE_NAME);
+            if (queue == null)
+            {
+                Console.WriteLine($"Объект метаданных \"{OUTGOING_QUEUE_NAME}\" не найден."); return;
+            }
+            Console.WriteLine($"{queue.Name} [{queue.TableName}]");
+
+            int version = GetOutgoingDataContractVersion(in queue);
+            if (version < 1) { return; }
+            Console.WriteLine($"Версия исходящей очереди: {version}");
+
+            if (!ConfigureOutgoingQueue(version, in queue))
+            {
+                return;
+            }
+            Console.WriteLine();
 
             EntityDataMapperProvider provider = new EntityDataMapperProvider(infoBase, DatabaseProvider.SQLServer, MS_CONNECTION_STRING);
 
             EntityJsonSerializer serializer = new EntityJsonSerializer(provider);
 
-            string routingKey = "dajet-queue"; // TODO: MessageType "Справочник.Номенклатура";
-            string uri = "amqp://guest:guest@localhost:5672"; // /%2F /dajet-exchange
+            string routingKey = "Справочник.ТестовыйСправочник";
+            string uri = "amqp://guest:guest@localhost:5672/%2F/DISPATCHER";
+            //string uri = "amqp://guest:guest@localhost:5672/%2F/AGGREGATOR";
 
             using (IMessageConsumer consumer = new MsMessageConsumer(MS_CONNECTION_STRING, in queue))
             {
                 using (RmqMessageProducer producer = new RmqMessageProducer(uri, routingKey))
                 {
-                    producer.Initialize();
-                    producer.AppId = "DaJet.RabbitMQ";
+                    producer.Initialize(ExchangeRoles.Dispatcher);
 
                     int published = producer.Publish(consumer, serializer);
 
@@ -54,6 +68,35 @@ namespace DaJet.RabbitMQ.Test
 
             watch.Stop();
             Console.WriteLine($"Elapsed in {watch.ElapsedMilliseconds} ms");
+        }
+        private int GetOutgoingDataContractVersion(in ApplicationObject queue)
+        {
+            DbInterfaceValidator validator = new DbInterfaceValidator();
+            int version = validator.GetOutgoingInterfaceVersion(in queue);
+            if (version < 1)
+            {
+                Console.WriteLine($"Не удалось определить версию контракта данных.");
+            }
+            return version;
+        }
+        private bool ConfigureOutgoingQueue(int version, in ApplicationObject queue)
+        {
+            DbQueueConfigurator configurator = new DbQueueConfigurator(version, DatabaseProvider.SQLServer, MS_CONNECTION_STRING);
+            configurator.ConfigureOutgoingMessageQueue(in queue, out List<string> errors);
+
+            if (errors.Count > 0)
+            {
+                foreach (string error in errors)
+                {
+                    Console.WriteLine(error);
+                }
+
+                return false;
+            }
+
+            Console.WriteLine($"Исходящая очередь настроена успешно.");
+
+            return true;
         }
     }
 }

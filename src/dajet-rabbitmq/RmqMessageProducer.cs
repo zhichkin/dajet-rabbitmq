@@ -6,7 +6,11 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Text;
+using System.Text.Json;
 using System.Web;
+using V10 = DaJet.Data.Messaging.V10;
+using V11 = DaJet.Data.Messaging.V11;
+using V12 = DaJet.Data.Messaging.V12;
 
 namespace DaJet.RabbitMQ
 {
@@ -16,12 +20,12 @@ namespace DaJet.RabbitMQ
         private IModel Channel;
         private IBasicProperties Properties;
         private bool ConnectionIsBlocked = false;
-
+        
         private bool IsNacked = false;
         private ulong DeliveryTag = 0UL;
 
-        private string _AppId = string.Empty;
-        private string _MessageType = string.Empty;
+        private byte[] _buffer; // message body buffer
+        private ExchangeRoles _exchangeRole = ExchangeRoles.None;
 
         public string HostName { get; private set; } = "localhost";
         public int HostPort { get; private set; } = 5672;
@@ -36,32 +40,15 @@ namespace DaJet.RabbitMQ
             ParseRmqUri(uri);
             RoutingKey = routingKey;
         }
-        public string AppId
-        {
-            get { return _AppId; }
-            set
-            {
-                _AppId = value;
-                Properties.AppId = _AppId;
-            }
-        }
-        public string MessageType
-        {
-            get { return _MessageType; }
-            set
-            {
-                _MessageType = value;
-                Properties.Type = _MessageType;
-            }
-        }
 
         #region "RABBITMQ CONNECTION SETUP"
 
-        public void Initialize()
+        public void Initialize(ExchangeRoles role)
         {
             Connection = CreateConnection();
             Channel = CreateChannel(Connection);
             Properties = CreateMessageProperties(Channel);
+            _exchangeRole = role;
         }
         private void ParseRmqUri(string amqpUri)
         {
@@ -155,6 +142,14 @@ namespace DaJet.RabbitMQ
             channel.BasicNacks += BasicNacksHandler;
             return channel;
         }
+        private IBasicProperties CreateMessageProperties(IModel channel)
+        {
+            IBasicProperties properties = channel.CreateBasicProperties();
+            properties.ContentType = "application/json";
+            properties.DeliveryMode = 2; // persistent
+            properties.ContentEncoding = "UTF-8";
+            return properties;
+        }
         private void BasicAcksHandler(object sender, BasicAckEventArgs args)
         {
             //if (!(sender is IModel channel)) return;
@@ -166,29 +161,6 @@ namespace DaJet.RabbitMQ
             if (args.DeliveryTag <= DeliveryTag)
             {
                 IsNacked = true;
-            }
-        }
-        private IBasicProperties CreateMessageProperties(IModel channel)
-        {
-            IBasicProperties properties = channel.CreateBasicProperties();
-            properties.ContentType = "application/json";
-            properties.DeliveryMode = 2; // persistent
-            properties.ContentEncoding = "UTF-8";
-            properties.AppId = AppId;
-            properties.Type = MessageType;
-            SetOperationTypeHeader(properties);
-            return properties;
-        }
-        private void SetOperationTypeHeader(IBasicProperties properties)
-        {
-            if (properties.Headers == null)
-            {
-                properties.Headers = new Dictionary<string, object>();
-            }
-
-            if (!properties.Headers.TryAdd("OperationType", "UPSERT"))
-            {
-                properties.Headers["OperationType"] = "UPSERT";
             }
         }
         public void Dispose()
@@ -203,6 +175,11 @@ namespace DaJet.RabbitMQ
             {
                 Connection.Dispose();
                 Connection = null;
+            }
+
+            if (_buffer != null)
+            {
+                ArrayPool<byte>.Shared.Return(_buffer);
             }
         }
 
@@ -254,35 +231,12 @@ namespace DaJet.RabbitMQ
                         throw new Exception("Connection is blocked");
                     }
 
-                    Properties.Type = message.MessageType;
-                    Properties.MessageId = Guid.NewGuid().ToString();
+                    ConfigureMessageProperties(in message, Properties);
 
-                    byte[] buffer = ArrayPool<byte>.Shared.Rent(message.MessageBody.Length * 2);
-
-                    int encoded = Encoding.UTF8.GetBytes(message.MessageBody, 0, message.MessageBody.Length, buffer, 0);
-
-                    ReadOnlyMemory<byte> messageBody = new ReadOnlyMemory<byte>(buffer, 0, encoded);
-
-                    //FIXME: incorrect ArrayPool usage inside GetMessageBody method !!!
-                    //ReadOnlyMemory<byte> messageBody = message.GetMessageBody(); 
-
-                    if (messageBody.IsEmpty)
-                    {
-                        if (message is Data.Messaging.V3.OutgoingMessage msg)
-                        {
-                            messageBody = serializer.Serialize(message.MessageType, msg.Reference);
-
-                            if (messageBody.IsEmpty)
-                            {
-                                messageBody = serializer.SerializeAsObjectDeletion(message.MessageType, msg.Reference);
-                            }
-                        }
-                    }
+                    ReadOnlyMemory<byte> messageBody = GetMessageBody(in message, in serializer);
 
                     Channel.BasicPublish(ExchangeName, RoutingKey, Properties, messageBody);
-
-                    ArrayPool<byte>.Shared.Return(buffer);
-
+                    
                     produced++;
                 }
                 consumer.TxCommit();
@@ -301,62 +255,204 @@ namespace DaJet.RabbitMQ
 
             return produced;
         }
+        
+        private ReadOnlyMemory<byte> GetMessageBody(in OutgoingMessageDataMapper message, in EntityJsonSerializer serializer)
+        {
+            int bufferSize = message.MessageBody.Length * 2; // char == 2 bytes
 
-        //private void ConfigureMessageProperties(DatabaseMessage message, IBasicProperties properties)
-        //{
-        //    properties.AppId = message.Sender;
-        //    properties.Type = message.MessageType;
-        //    properties.MessageId = message.Uuid.ToString();
+            if (_buffer != null && _buffer.Length < bufferSize)
+            {
+                ArrayPool<byte>.Shared.Return(_buffer);
+            }
+            else
+            {
+                _buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
+            }
+            
+            int encoded = Encoding.UTF8.GetBytes(message.MessageBody, 0, message.MessageBody.Length, _buffer, 0);
 
-        //    if (properties.Headers == null)
-        //    {
-        //        properties.Headers = new Dictionary<string, object>();
-        //    }
-        //    else
-        //    {
-        //        properties.Headers.Clear();
-        //    }
+            ReadOnlyMemory<byte> messageBody = new ReadOnlyMemory<byte>(_buffer, 0, encoded);
 
-        //    SetOperationTypeHeader(message, properties);
+            if (messageBody.IsEmpty)
+            {
+                if (message is V11.OutgoingMessage message11)
+                {
+                    messageBody = serializer.Serialize(message.MessageType, message11.Reference);
 
-        //    if (Settings.MessageBrokerSettings.ExchangeRole == 0)
-        //    {
-        //        SetAggregatorCopyHeader(message, properties);
-        //    }
-        //    else
-        //    {
-        //        SetDispatcherCopyHeader(message, properties);
-        //    }
-        //}
-        //private void SetOperationTypeHeader(DatabaseMessage message, IBasicProperties properties)
-        //{
-        //    if (string.IsNullOrWhiteSpace(message.OperationType)) return;
+                    if (messageBody.IsEmpty)
+                    {
+                        messageBody = serializer.SerializeAsObjectDeletion(message.MessageType, message11.Reference);
+                    }
+                }
+                else if (message is V12.OutgoingMessage message12)
+                {
+                    messageBody = serializer.Serialize(message.MessageType, message12.Reference);
 
-        //    if (properties.Headers == null)
-        //    {
-        //        properties.Headers = new Dictionary<string, object>();
-        //    }
+                    if (messageBody.IsEmpty)
+                    {
+                        messageBody = serializer.SerializeAsObjectDeletion(message.MessageType, message12.Reference);
+                    }
+                }
+            }
+            
+            return messageBody;
+        }
+        
+        private void ConfigureMessageProperties(in OutgoingMessageDataMapper message, IBasicProperties properties)
+        {
+            if (message is V10.OutgoingMessage message10)
+            {
+                ConfigureMessageProperties(in message10, properties);
+            }
+            else if (message is V11.OutgoingMessage message11)
+            {
+                ConfigureMessageProperties(in message11, properties);
+            }
+            else if (message is V12.OutgoingMessage message12)
+            {
+                ConfigureMessageProperties(in message12, properties);
+            }
+        }
 
-        //    if (!properties.Headers.TryAdd("OperationType", message.OperationType))
-        //    {
-        //        properties.Headers["OperationType"] = message.OperationType;
-        //    }
-        //}
-        //private void SetAggregatorCopyHeader(DatabaseMessage message, IBasicProperties properties)
-        //{
-        //    if (string.IsNullOrWhiteSpace(message.Sender)) return;
+        private void ConfigureMessageProperties(in V10.OutgoingMessage message, IBasicProperties properties)
+        {
+            properties.AppId = message.Sender;
+            properties.Type = message.MessageType;
+            properties.MessageId = message.Uuid.ToString();
 
-        //    string header = (Settings.MessageBrokerSettings.CopyType == 0 ? "CC" : "BCC");
+            if (properties.Headers == null)
+            {
+                properties.Headers = new Dictionary<string, object>();
+            }
+            else
+            {
+                properties.Headers.Clear();
+            }
 
-        //    properties.Headers.Add(header, new string[] { message.Sender });
-        //}
-        //private void SetDispatcherCopyHeader(DatabaseMessage message, IBasicProperties properties)
-        //{
-        //    if (string.IsNullOrWhiteSpace(message.Recipients)) return;
+            SetOperationTypeHeader(message, properties);
 
-        //    string header = (Settings.MessageBrokerSettings.CopyType == 0 ? "CC" : "BCC");
+            if (_exchangeRole == ExchangeRoles.Aggregator)
+            {
+                SetAggregatorCopyHeader(message, properties);
+            }
+            else if (_exchangeRole == ExchangeRoles.Dispatcher)
+            {
+                SetDispatcherCopyHeader(message, properties);
+            }
+        }
+        private void SetOperationTypeHeader(in V10.OutgoingMessage message, IBasicProperties properties)
+        {
+            if (string.IsNullOrWhiteSpace(message.OperationType)) return;
 
-        //    properties.Headers.Add(header, message.Recipients.Split(',', StringSplitOptions.RemoveEmptyEntries));
-        //}
+            if (properties.Headers == null)
+            {
+                properties.Headers = new Dictionary<string, object>();
+            }
+
+            if (!properties.Headers.TryAdd("OperationType", message.OperationType))
+            {
+                properties.Headers["OperationType"] = message.OperationType;
+            }
+        }
+        private void SetAggregatorCopyHeader(in V10.OutgoingMessage message, IBasicProperties properties)
+        {
+            if (string.IsNullOrWhiteSpace(message.Sender)) return;
+
+            properties.Headers.Add("CC", new string[] { message.Sender });
+        }
+        private void SetDispatcherCopyHeader(in V10.OutgoingMessage message, IBasicProperties properties)
+        {
+            if (string.IsNullOrWhiteSpace(message.Recipients)) return;
+
+            properties.Headers.Add("CC", message.Recipients.Split(',', StringSplitOptions.RemoveEmptyEntries));
+        }
+
+        private void ConfigureMessageProperties(in V11.OutgoingMessage message, IBasicProperties properties)
+        {
+            properties.Type = message.MessageType;
+            properties.MessageId = message.Uuid.ToString();
+
+            if (!string.IsNullOrWhiteSpace(message.Headers))
+            {
+                try
+                {
+                    Dictionary<string, string> headers = JsonSerializer.Deserialize<Dictionary<string, string>>(message.Headers);
+                    ConfigureMessageHeaders(in headers, properties);
+                }
+                catch (Exception error)
+                {
+                    throw new FormatException($"Message headers format exception. Message number: {{{message.MessageNumber}}}. Error message: {error.Message}");
+                }
+            }
+        }
+        private void ConfigureMessageProperties(in V12.OutgoingMessage message, IBasicProperties properties)
+        {
+            properties.Type = message.MessageType;
+            properties.MessageId = message.Uuid.ToString();
+
+            if (!string.IsNullOrWhiteSpace(message.Headers))
+            {
+                try
+                {
+                    Dictionary<string, string> headers = JsonSerializer.Deserialize<Dictionary<string, string>>(message.Headers);
+                    ConfigureMessageHeaders(in headers, properties);
+                }
+                catch (Exception error)
+                {
+                    throw new FormatException($"Message headers format exception. Message number: {{{message.MessageNumber}}}. Error message: {error.Message}");
+                }
+            }
+        }
+        private void ConfigureMessageHeaders(in Dictionary<string, string> headers, IBasicProperties properties)
+        {
+            if (properties.Headers == null)
+            {
+                properties.Headers = new Dictionary<string, object>();
+            }
+            else
+            {
+                properties.Headers.Clear();
+            }
+
+            foreach (var header in headers)
+            {
+                if (header.Key == "Sender")
+                {
+                    properties.AppId = header.Value;
+
+                    if (_exchangeRole == ExchangeRoles.Aggregator)
+                    {
+                        _ = properties.Headers.TryAdd("CC", new string[] { header.Value });
+                    }
+                }
+                else if (header.Key == "Recipients")
+                {
+                    if (_exchangeRole == ExchangeRoles.Aggregator)
+                    {
+                        continue;
+                    }
+                    else if (_exchangeRole == ExchangeRoles.Dispatcher)
+                    {
+                        _ = properties.Headers.TryAdd("CC", header.Value.Split(',', StringSplitOptions.RemoveEmptyEntries));
+                    }
+                    else
+                    {
+                        _ = properties.Headers.TryAdd(header.Key, header.Value);
+                    }
+                }
+                else if (header.Key == "CC")
+                {
+                    _ = properties.Headers.TryAdd("CC", header.Value.Split(',', StringSplitOptions.RemoveEmptyEntries));
+                }
+                else if (header.Key == "BCC")
+                {
+                    _ = properties.Headers.TryAdd("BCC", header.Value.Split(',', StringSplitOptions.RemoveEmptyEntries));
+                }
+                else
+                {
+                    _ = properties.Headers.TryAdd(header.Key, header.Value);
+                }
+            }
+        }
     }
 }
