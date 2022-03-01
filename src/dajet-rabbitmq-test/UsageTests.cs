@@ -98,5 +98,22 @@ namespace DaJet.RabbitMQ.Test
 
             return true;
         }
+
+        [TestMethod] public void TestRmqMessageConsumer()
+        {
+            string uri = "amqp://guest:guest@localhost:5672/%2F";
+            List<string> queues = new List<string>() { "dajet-queue" };
+
+            using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri))
+            {
+                Console.WriteLine($"Host: {consumer.HostName}");
+                Console.WriteLine($"Port: {consumer.HostPort}");
+                Console.WriteLine($"User: {consumer.UserName}");
+                Console.WriteLine($"Pass: {consumer.Password}");
+                Console.WriteLine($"VHost: {consumer.VirtualHost}");
+
+                consumer.Consume(in queues);
+            }
+        }
     }
 }
