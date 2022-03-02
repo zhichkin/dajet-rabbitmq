@@ -7,6 +7,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading;
 
 namespace DaJet.RabbitMQ.Test
 {
@@ -104,7 +105,9 @@ namespace DaJet.RabbitMQ.Test
             string uri = "amqp://guest:guest@localhost:5672/%2F";
             List<string> queues = new List<string>() { "dajet-queue" };
 
-            using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri))
+            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
+            using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri, in queues))
             {
                 Console.WriteLine($"Host: {consumer.HostName}");
                 Console.WriteLine($"Port: {consumer.HostPort}");
@@ -112,8 +115,12 @@ namespace DaJet.RabbitMQ.Test
                 Console.WriteLine($"Pass: {consumer.Password}");
                 Console.WriteLine($"VHost: {consumer.VirtualHost}");
 
-                consumer.Consume(in queues);
+                consumer.Consume(stop.Token, Logger);
             }
+        }
+        private void Logger(string message)
+        {
+            Console.WriteLine(message);
         }
     }
 }

@@ -1,4 +1,5 @@
-﻿using RabbitMQ.Client;
+﻿using DaJet.Metadata;
+using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using System;
 using System.Collections.Concurrent;
@@ -13,7 +14,7 @@ namespace DaJet.RabbitMQ
     public sealed class RmqMessageConsumer : IDisposable
     {
         private IConnection Connection;
-        private ConcurrentDictionary<string, EventingBasicConsumer> Consumers = new ConcurrentDictionary<string, EventingBasicConsumer>();
+        private readonly ConcurrentDictionary<string, EventingBasicConsumer> Consumers = new ConcurrentDictionary<string, EventingBasicConsumer>();
 
         public string HostName { get; private set; } = "localhost";
         public int HostPort { get; private set; } = 5672;
@@ -21,32 +22,13 @@ namespace DaJet.RabbitMQ
         public string UserName { get; private set; } = "guest";
         public string Password { get; private set; } = "guest";
 
-        public RmqMessageConsumer(in string uri)
+        public RmqMessageConsumer(in string uri, in List<string> queues)
         {
             ParseRmqUri(in uri);
-        }
-        public void Consume(in List<string> queues)
-        {
-            Connection = CreateConnection();
-            InitializeConsumers(in queues);
 
-            Task.Delay(TimeSpan.FromSeconds(60)).Wait();
-        }
-        public void Dispose()
-        {
-            if (Connection != null)
+            foreach (string queue in queues)
             {
-                if (Connection.IsOpen)
-                {
-                    Connection.Close();
-                }
-                Connection.Dispose();
-                Connection = null;
-            }
-
-            foreach (var consumer in Consumers)
-            {
-                DisposeConsumer(consumer.Key);
+                _ = Consumers.TryAdd(queue, null);
             }
         }
         private void ParseRmqUri(in string amqpUri)
@@ -78,6 +60,45 @@ namespace DaJet.RabbitMQ
                 }
             }
         }
+
+        private Action<string> _logger;
+
+        public void Consume(CancellationToken token, Action<string> logger)
+        {
+            _logger = logger;
+
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    InitializeOrResetConnection();
+                    InitializeOrResetConsumers();
+                    Task.Delay(TimeSpan.FromSeconds(10), token).Wait();
+                }
+                catch (Exception error)
+                {
+                    logger(ExceptionHelper.GetErrorText(error));
+                }
+            }
+        }
+        public void Dispose()
+        {
+            if (Connection != null)
+            {
+                if (Connection.IsOpen)
+                {
+                    Connection.Close();
+                }
+                Connection.Dispose();
+                Connection = null;
+            }
+
+            foreach (var consumer in Consumers)
+            {
+                DisposeConsumer(consumer.Key);
+            }
+        }
+
         private IConnection CreateConnection()
         {
             IConnectionFactory factory = new ConnectionFactory()
@@ -92,34 +113,31 @@ namespace DaJet.RabbitMQ
             };
             return factory.CreateConnection();
         }
-
-        private void DisposeConsumer(string consumerTag)
+        private void InitializeOrResetConnection()
         {
-            if (!Consumers.TryGetValue(consumerTag, out EventingBasicConsumer consumer))
+            if (Connection == null)
             {
-                return;
+                Connection = CreateConnection();
             }
-
-            if (consumer != null)
+            else if (!Connection.IsOpen)
             {
-                consumer.Received -= ProcessMessage;
-
-                if (consumer.Model != null)
-                {
-                    consumer.Model.Dispose();
-                    consumer.Model = null;
-                }
-
-                consumer = null;
+                Dispose();
+                Connection = CreateConnection();
             }
-            
-            _ = Consumers.TryRemove(consumerTag, out _);
         }
-        private void InitializeConsumers(in List<string> queues)
+        
+        private void InitializeOrResetConsumers()
         {
-            foreach (string queue in queues)
+            foreach (var consumer in Consumers)
             {
-                StartConsumerTask(queue);
+                if (consumer.Value == null)
+                {
+                    StartConsumerTask(consumer.Key);
+                }
+                else if (!IsConsumerHealthy(consumer.Value))
+                {
+                    ResetConsumerTask(consumer.Key);
+                }
             }
         }
         private void StartConsumerTask(string queueName)
@@ -159,7 +177,7 @@ namespace DaJet.RabbitMQ
                 throw; // Завершаем поток (задачу) с ошибкой
             }
 
-            _ = Consumers.TryAdd(consumerTag, consumer);
+            _ = Consumers.TryUpdate(queue, consumer, null);
         }
         private bool IsConsumerHealthy(EventingBasicConsumer consumer)
         {
@@ -167,6 +185,31 @@ namespace DaJet.RabbitMQ
                 && consumer.Model != null
                 && consumer.Model.IsOpen
                 && consumer.IsRunning);
+        }
+        private void ResetConsumerTask(string queueName)
+        {
+            DisposeConsumer(queueName);
+            StartConsumerTask(queueName);
+        }
+        private void DisposeConsumer(string queueName)
+        {
+            if (!Consumers.TryGetValue(queueName, out EventingBasicConsumer consumer))
+            {
+                return;
+            }
+
+            if (consumer != null)
+            {
+                consumer.Received -= ProcessMessage;
+
+                if (consumer.Model != null)
+                {
+                    consumer.Model.Dispose();
+                    consumer.Model = null;
+                }
+
+                _ = Consumers.TryUpdate(queueName, null, consumer);
+            }
         }
 
         private void ProcessMessage(object sender, BasicDeliverEventArgs args)
@@ -184,7 +227,7 @@ namespace DaJet.RabbitMQ
 
             string messageBody = Encoding.UTF8.GetString(args.Body.Span);
 
-            Console.WriteLine($"{exchangeName}: {messageBody}");
+            _logger($"{exchangeName}: {messageBody}");
 
 
             //JsonDataTransferMessage dataTransferMessage = GetJsonDataTransferMessage(args);
@@ -236,20 +279,24 @@ namespace DaJet.RabbitMQ
             
             return "Unknown";
         }
-        private void RemovePoisonMessage(string exchange, EventingBasicConsumer consumer, ulong deliveryTag)
-        {
-            try
-            {
-                consumer.Model.BasicNack(deliveryTag, false, false);
-                // TODO: FileLogger.Log("Poison message (bad format) has been removed from queue \"" + exchange + "\".");
-            }
-            catch
-            {
-                throw;
-                //FileLogger.Log(LOG_TOKEN, ExceptionHelper.GetErrorText(error));
-                //FileLogger.Log(LOG_TOKEN, "Failed to Nack message for exchange \"" + exchange + "\".");
-            }
-        }
+
+
+
+        //private void RemovePoisonMessage(string queueName, EventingBasicConsumer consumer, ulong deliveryTag)
+        //{
+        //    try
+        //    {
+        //        consumer.Model.BasicNack(deliveryTag, false, false);
+        //        // TODO: FileLogger.Log("Poison message (bad format) has been removed from queue \"" + exchange + "\".");
+        //    }
+        //    catch
+        //    {
+        //        throw;
+        //        //FileLogger.Log(LOG_TOKEN, ExceptionHelper.GetErrorText(error));
+        //        //FileLogger.Log(LOG_TOKEN, "Failed to Nack message for exchange \"" + exchange + "\".");
+        //    }
+        //}
+
         //private JsonDataTransferMessage GetJsonDataTransferMessage(BasicDeliverEventArgs args)
         //{
         //    string messageBody = Encoding.UTF8.GetString(args.Body.Span);
@@ -293,6 +340,27 @@ namespace DaJet.RabbitMQ
         //    }
 
         //    return dataTransferMessage;
+        //}
+
+        //private void UnsubscribeConsumer(EventingBasicConsumer consumer, string consumerTag)
+        //{
+        //    try
+        //    {
+        //        if (IsConsumerHealthy(consumer))
+        //        {
+        //            consumer.Model.BasicCancel(consumerTag);
+        //        }
+        //    }
+        //    catch (Exception error)
+        //    {
+        //        FileLogger.Log(LOG_TOKEN, ExceptionHelper.GetErrorText(error));
+        //    }
+        //    finally
+        //    {
+        //        DisposeChannel(consumer.Model);
+        //        DisposeConsumer(consumer);
+        //    }
+        //    FileLogger.Log(LOG_TOKEN, $"Consumer tag \"{consumerTag}\" has been unsubscribed.");
         //}
     }
 }
