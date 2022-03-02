@@ -1,18 +1,28 @@
-﻿using DaJet.Metadata;
+﻿using DaJet.Data.Messaging;
+using DaJet.Metadata;
+using DaJet.Metadata.Model;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
+using V1 = DaJet.Data.Messaging.V1;
+using V10 = DaJet.Data.Messaging.V10;
+using V11 = DaJet.Data.Messaging.V11;
+using V12 = DaJet.Data.Messaging.V12;
 
 namespace DaJet.RabbitMQ
 {
     public sealed class RmqMessageConsumer : IDisposable
     {
+        private const string DATABASE_INTERFACE_IS_NOT_SUPPORTED_ERROR
+            = "Интерфейс данных входящей очереди не поддерживается.";
+
         private IConnection Connection;
         private readonly ConcurrentDictionary<string, EventingBasicConsumer> Consumers = new ConcurrentDictionary<string, EventingBasicConsumer>();
 
@@ -62,6 +72,42 @@ namespace DaJet.RabbitMQ
         }
 
         private Action<string> _logger;
+        private int _version;
+        private int _yearOffset = 0;
+        private ApplicationObject _queue;
+        private string _connectionString;
+        public void Initialize(DatabaseProvider provider, string connectionString, string metadataName)
+        {
+            _connectionString = connectionString;
+
+            if (!new MetadataService()
+                .UseDatabaseProvider(provider)
+                .UseConnectionString(connectionString)
+                .TryOpenInfoBase(out InfoBase infoBase, out string error))
+            {
+                throw new Exception(error);
+            }
+
+            _yearOffset = infoBase.YearOffset;
+
+            _queue = infoBase.GetApplicationObjectByName(metadataName);
+            if (_queue == null)
+            {
+                throw new Exception($"Объект метаданных \"{metadataName}\" не найден.");
+            }
+
+            _version = GetDataContractVersion(in _queue);
+            if (_version < 1)
+            {
+                throw new Exception(DATABASE_INTERFACE_IS_NOT_SUPPORTED_ERROR);
+            }
+        }
+        private int GetDataContractVersion(in ApplicationObject queue)
+        {
+            DbInterfaceValidator validator = new DbInterfaceValidator();
+
+            return validator.GetIncomingInterfaceVersion(in queue);
+        }
 
         public void Consume(CancellationToken token, Action<string> logger)
         {
@@ -71,13 +117,14 @@ namespace DaJet.RabbitMQ
             {
                 try
                 {
+                    // TODO: check data contract version and re-initialize 1C metadata if needed
                     InitializeOrResetConnection();
                     InitializeOrResetConsumers();
-                    Task.Delay(TimeSpan.FromSeconds(10), token).Wait();
+                    Task.Delay(TimeSpan.FromSeconds(60), token).Wait();
                 }
                 catch (Exception error)
                 {
-                    logger(ExceptionHelper.GetErrorText(error));
+                    _logger(ExceptionHelper.GetErrorText(error));
                 }
             }
         }
@@ -210,157 +257,159 @@ namespace DaJet.RabbitMQ
 
                 _ = Consumers.TryUpdate(queueName, null, consumer);
             }
+
+            //if (IsConsumerHealthy(consumer))
+            //{
+            //    consumer.Model.BasicCancel(consumer.ConsumerTags[0]);
+            //}
         }
+
 
         private void ProcessMessage(object sender, BasicDeliverEventArgs args)
         {
             if (!(sender is EventingBasicConsumer consumer)) return;
 
-            consumer.Model.BasicAck(args.DeliveryTag, false);
+            try
+            {
+                using (IMessageProducer producer = new MsMessageProducer(in _connectionString, _queue))
+                {
+                    IncomingMessageDataMapper message = ProduceMessage(in args);
 
-            //if (!Consumers.TryGetValue(args.ConsumerTag, out _))
-            //{
+                    producer.Insert(in message);
 
-            //}
-
-            string exchangeName = GetExchangeName(in args);
-
-            string messageBody = Encoding.UTF8.GetString(args.Body.Span);
-
-            _logger($"{exchangeName}: {messageBody}");
-
-
-            //JsonDataTransferMessage dataTransferMessage = GetJsonDataTransferMessage(args);
-            //if (dataTransferMessage == null)
-            //{
-            //    RemovePoisonMessage(exchange, consumer, args.DeliveryTag);
-            //    return;
-            //}
-
-            //bool success = true;
-            //IDatabaseMessageProducer producer = Services.GetService<IDatabaseMessageProducer>();
-            //try
-            //{
-            //    DatabaseMessage message = producer.ProduceMessage(dataTransferMessage);
-            //    success = producer.InsertMessage(message);
-            //    if (success)
-            //    {
-            //        consumer.Model.BasicAck(args.DeliveryTag, false);
-            //    }
-            //}
-            //catch (Exception error)
-            //{
-            //    success = false;
-            //    FileLogger.Log(LOG_TOKEN, ExceptionHelper.GetErrorText(error));
-            //}
-
-            //if (!success)
-            //{
-            //    // return unacked messages back to queue in the same order (!)
-            //    ResetConsumer(args.ConsumerTag);
-
-            //    FileLogger.Log(LOG_TOKEN,
-            //        "Failed to process message. Consumer (tag = " + args.ConsumerTag.ToString()
-            //        + ") for exchange \"" + exchange + "\" has been reset.");
-            //}
+                    consumer.Model.BasicAck(args.DeliveryTag, false);
+                }
+            }
+            catch (Exception error)
+            {
+                _logger(ExceptionHelper.GetErrorText(error));
+            }
         }
-        private string GetExchangeName(in BasicDeliverEventArgs args)
+        private IncomingMessageDataMapper ProduceMessage(in BasicDeliverEventArgs args)
         {
-            if (args == null) return "Unknown";
-
-            if (!string.IsNullOrWhiteSpace(args.Exchange))
+            if (_version == 1)
             {
-                return args.Exchange;
+                return ProduceMessage1(in args);
             }
-            else if (!string.IsNullOrWhiteSpace(args.RoutingKey))
+            else if (_version == 10)
             {
-                return args.RoutingKey;
+                return ProduceMessage10(in args);
             }
-            
-            return "Unknown";
+            else if (_version == 11)
+            {
+                return ProduceMessage11(in args);
+            }
+            else if (_version == 12)
+            {
+                return ProduceMessage12(in args);
+            }
+            else
+            {
+                return null;
+            }
         }
+        private IncomingMessageDataMapper ProduceMessage1(in BasicDeliverEventArgs args)
+        {
+            V1.IncomingMessage message = IncomingMessageDataMapper.Create(_version) as V1.IncomingMessage;
 
+            message.DateTimeStamp = DateTime.Now.AddYears(_yearOffset);
+            message.MessageNumber = DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
+            message.ErrorCount = 0;
+            message.ErrorDescription = String.Empty;
+            message.Headers = GetMessageHeaders(in args);
+            message.Sender = (args.BasicProperties.AppId ?? string.Empty);
+            message.MessageType = (args.BasicProperties.Type ?? string.Empty);
+            message.MessageBody = (args.Body.Length == 0 ? string.Empty : Encoding.UTF8.GetString(args.Body.Span));
 
+            return message;
+        }
+        private IncomingMessageDataMapper ProduceMessage10(in BasicDeliverEventArgs args)
+        {
+            V10.IncomingMessage message = IncomingMessageDataMapper.Create(_version) as V10.IncomingMessage;
 
-        //private void RemovePoisonMessage(string queueName, EventingBasicConsumer consumer, ulong deliveryTag)
-        //{
-        //    try
-        //    {
-        //        consumer.Model.BasicNack(deliveryTag, false, false);
-        //        // TODO: FileLogger.Log("Poison message (bad format) has been removed from queue \"" + exchange + "\".");
-        //    }
-        //    catch
-        //    {
-        //        throw;
-        //        //FileLogger.Log(LOG_TOKEN, ExceptionHelper.GetErrorText(error));
-        //        //FileLogger.Log(LOG_TOKEN, "Failed to Nack message for exchange \"" + exchange + "\".");
-        //    }
-        //}
+            message.Uuid = Guid.NewGuid();
+            message.DateTimeStamp = DateTime.Now.AddYears(_yearOffset);
+            message.MessageNumber = DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
+            message.ErrorCount = 0;
+            message.ErrorDescription = String.Empty;
+            message.Sender = (args.BasicProperties.AppId ?? string.Empty);
+            message.MessageType = (args.BasicProperties.Type ?? string.Empty);
+            message.MessageBody = (args.Body.Length == 0 ? string.Empty : Encoding.UTF8.GetString(args.Body.Span));
 
-        //private JsonDataTransferMessage GetJsonDataTransferMessage(BasicDeliverEventArgs args)
-        //{
-        //    string messageBody = Encoding.UTF8.GetString(args.Body.Span);
+            if (args.BasicProperties.Headers != null)
+            {
+                if (args.BasicProperties.Headers.TryGetValue("OperationType", out object value))
+                {
+                    if (value is byte[] operationType)
+                    {
+                        message.OperationType = Encoding.UTF8.GetString(operationType);
+                    }
+                }
+            }
 
-        //    JsonDataTransferMessage dataTransferMessage = null;
+            return message;
+        }
+        private IncomingMessageDataMapper ProduceMessage11(in BasicDeliverEventArgs args)
+        {
+            V11.IncomingMessage message = IncomingMessageDataMapper.Create(_version) as V11.IncomingMessage;
 
-        //    if (string.IsNullOrWhiteSpace(args.BasicProperties.Type))
-        //    {
-        //        try
-        //        {
-        //            dataTransferMessage = JsonSerializer.Deserialize<JsonDataTransferMessage>(messageBody);
-        //        }
-        //        catch (Exception error)
-        //        {
-        //            FileLogger.Log(LOG_TOKEN, ExceptionHelper.GetErrorText(error));
-        //        }
-        //    }
-        //    else
-        //    {
-        //        dataTransferMessage = new JsonDataTransferMessage()
-        //        {
-        //            Sender = (args.BasicProperties.AppId == null ? string.Empty : args.BasicProperties.AppId)
-        //        };
-        //        dataTransferMessage.Objects.Add(new JsonDataTransferObject()
-        //        {
-        //            Type = (args.BasicProperties.Type == null ? string.Empty : args.BasicProperties.Type),
-        //            Body = messageBody,
-        //            Operation = string.Empty
-        //        });
+            message.Uuid = Guid.NewGuid();
+            message.DateTimeStamp = DateTime.Now.AddYears(_yearOffset);
+            message.MessageNumber = DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
+            message.ErrorCount = 0;
+            message.ErrorDescription = String.Empty;
+            message.Headers = GetMessageHeaders(in args);
+            message.Sender = (args.BasicProperties.AppId ?? string.Empty);
+            message.MessageType = (args.BasicProperties.Type ?? string.Empty);
+            message.MessageBody = (args.Body.Length == 0 ? string.Empty : Encoding.UTF8.GetString(args.Body.Span));
 
-        //        if (args.BasicProperties.Headers != null)
-        //        {
-        //            if (args.BasicProperties.Headers.TryGetValue("OperationType", out object value))
-        //            {
-        //                if (value is byte[] operationType)
-        //                {
-        //                    dataTransferMessage.Objects[0].Operation = Encoding.UTF8.GetString(operationType);
-        //                }
-        //            }
-        //        }
-        //    }
+            return message;
+        }
+        private IncomingMessageDataMapper ProduceMessage12(in BasicDeliverEventArgs args)
+        {
+            V12.IncomingMessage message = IncomingMessageDataMapper.Create(_version) as V12.IncomingMessage;
 
-        //    return dataTransferMessage;
-        //}
+            message.MessageNumber = DateTime.UtcNow.Ticks;
+            message.DateTimeStamp = DateTime.Now.AddYears(_yearOffset);
+            message.ErrorCount = 0;
+            message.ErrorDescription = String.Empty;
+            message.Headers = GetMessageHeaders(in args);
+            message.Sender = (args.BasicProperties.AppId ?? string.Empty);
+            message.MessageType = (args.BasicProperties.Type ?? string.Empty);
+            message.MessageBody = (args.Body.Length == 0 ? string.Empty : Encoding.UTF8.GetString(args.Body.Span));
 
-        //private void UnsubscribeConsumer(EventingBasicConsumer consumer, string consumerTag)
-        //{
-        //    try
-        //    {
-        //        if (IsConsumerHealthy(consumer))
-        //        {
-        //            consumer.Model.BasicCancel(consumerTag);
-        //        }
-        //    }
-        //    catch (Exception error)
-        //    {
-        //        FileLogger.Log(LOG_TOKEN, ExceptionHelper.GetErrorText(error));
-        //    }
-        //    finally
-        //    {
-        //        DisposeChannel(consumer.Model);
-        //        DisposeConsumer(consumer);
-        //    }
-        //    FileLogger.Log(LOG_TOKEN, $"Consumer tag \"{consumerTag}\" has been unsubscribed.");
-        //}
+            return message;
+        }
+        private string GetMessageHeaders(in BasicDeliverEventArgs args)
+        {
+            if (args.BasicProperties.Headers == null || args.BasicProperties.Headers.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            Dictionary<string, string> headers = new Dictionary<string, string>();
+
+            foreach (var header in args.BasicProperties.Headers)
+            {
+                if (header.Value is byte[] value)
+                {
+                    try
+                    {
+                        headers.Add(header.Key, Encoding.UTF8.GetString(value));
+                    }
+                    catch
+                    {
+                        headers.Add(header.Key, string.Empty);
+                    }
+                }
+            }
+
+            if (headers.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            return JsonSerializer.Serialize(headers);
+        }
     }
 }

@@ -13,7 +13,8 @@ namespace DaJet.RabbitMQ.Test
 {
     [TestClass] public class UsageTests
     {
-        private const string OUTGOING_QUEUE_NAME = "–егистр—ведений.»сход€ща€ќчередь11";
+        private const string INCOMING_QUEUE_NAME = "–егистр—ведений.¬ход€ща€ќчередь12";
+        private const string OUTGOING_QUEUE_NAME = "–егистр—ведений.»сход€ща€ќчередь12";
         private const string MS_CONNECTION_STRING = "Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True";
 
         [TestMethod] public void TestRmqMessageProducer()
@@ -103,12 +104,18 @@ namespace DaJet.RabbitMQ.Test
         [TestMethod] public void TestRmqMessageConsumer()
         {
             string uri = "amqp://guest:guest@localhost:5672/%2F";
-            List<string> queues = new List<string>() { "dajet-queue" };
+            List<string> queues = new List<string>()
+            {
+                "–»Ѕ.MAIN.N001",
+                "–»Ѕ.MAIN.N002"
+            };
 
-            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
             using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri, in queues))
             {
+                consumer.Initialize(DatabaseProvider.SQLServer, MS_CONNECTION_STRING, INCOMING_QUEUE_NAME);
+
                 Console.WriteLine($"Host: {consumer.HostName}");
                 Console.WriteLine($"Port: {consumer.HostPort}");
                 Console.WriteLine($"User: {consumer.UserName}");

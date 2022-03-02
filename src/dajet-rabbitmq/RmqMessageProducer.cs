@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
 using System.Web;
+using V1 = DaJet.Data.Messaging.V1;
 using V10 = DaJet.Data.Messaging.V10;
 using V11 = DaJet.Data.Messaging.V11;
 using V12 = DaJet.Data.Messaging.V12;
@@ -260,15 +261,16 @@ namespace DaJet.RabbitMQ
         {
             int bufferSize = message.MessageBody.Length * 2; // char == 2 bytes
 
-            if (_buffer != null && _buffer.Length < bufferSize)
-            {
-                ArrayPool<byte>.Shared.Return(_buffer);
-            }
-            else
+            if (_buffer == null)
             {
                 _buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
             }
-            
+            else if (_buffer.Length < bufferSize)
+            {
+                ArrayPool<byte>.Shared.Return(_buffer);
+                _buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
+            }
+
             int encoded = Encoding.UTF8.GetBytes(message.MessageBody, 0, message.MessageBody.Length, _buffer, 0);
 
             ReadOnlyMemory<byte> messageBody = new ReadOnlyMemory<byte>(_buffer, 0, encoded);
@@ -300,7 +302,11 @@ namespace DaJet.RabbitMQ
         
         private void ConfigureMessageProperties(in OutgoingMessageDataMapper message, IBasicProperties properties)
         {
-            if (message is V10.OutgoingMessage message10)
+            if (message is V1.OutgoingMessage message1)
+            {
+                ConfigureMessageProperties(in message1, properties);
+            }
+            else if (message is V10.OutgoingMessage message10)
             {
                 ConfigureMessageProperties(in message10, properties);
             }
@@ -366,7 +372,25 @@ namespace DaJet.RabbitMQ
 
             properties.Headers.Add("CC", message.Recipients.Split(',', StringSplitOptions.RemoveEmptyEntries));
         }
+        
+        private void ConfigureMessageProperties(in V1.OutgoingMessage message, IBasicProperties properties)
+        {
+            properties.Type = message.MessageType;
+            properties.MessageId = message.Uuid.ToString();
 
+            if (!string.IsNullOrWhiteSpace(message.Headers))
+            {
+                try
+                {
+                    Dictionary<string, string> headers = JsonSerializer.Deserialize<Dictionary<string, string>>(message.Headers);
+                    ConfigureMessageHeaders(in headers, properties);
+                }
+                catch (Exception error)
+                {
+                    throw new FormatException($"Message headers format exception. Message number: {{{message.MessageNumber}}}. Error message: {error.Message}");
+                }
+            }
+        }
         private void ConfigureMessageProperties(in V11.OutgoingMessage message, IBasicProperties properties)
         {
             properties.Type = message.MessageType;
