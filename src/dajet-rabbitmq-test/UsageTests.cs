@@ -13,8 +13,8 @@ namespace DaJet.RabbitMQ.Test
 {
     [TestClass] public class UsageTests
     {
-        private const string INCOMING_QUEUE_NAME = "–егистр—ведений.¬ход€ща€ќчередь12";
-        private const string OUTGOING_QUEUE_NAME = "–егистр—ведений.»сход€ща€ќчередь12";
+        private const string INCOMING_QUEUE_NAME = "–егистр—ведений.“естова€¬ход€ща€ќчередь"; //"–егистр—ведений.¬ход€ща€ќчередь12";
+        private const string OUTGOING_QUEUE_NAME = "–егистр—ведений.»сход€ща€ќчередь11";
         private const string MS_CONNECTION_STRING = "Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True";
 
         [TestMethod] public void TestRmqMessageProducer()
@@ -110,7 +110,7 @@ namespace DaJet.RabbitMQ.Test
                 "–»Ѕ.MAIN.N002"
             };
 
-            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
             using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri, in queues))
             {

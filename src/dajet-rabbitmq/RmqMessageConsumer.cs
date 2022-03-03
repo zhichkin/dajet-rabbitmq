@@ -72,13 +72,21 @@ namespace DaJet.RabbitMQ
         }
 
         private Action<string> _logger;
+
         private int _version;
         private int _yearOffset = 0;
+        private string _metadataName;
         private ApplicationObject _queue;
         private string _connectionString;
+        private DatabaseProvider _provider;
+
+        private CancellationToken _token;
+        
         public void Initialize(DatabaseProvider provider, string connectionString, string metadataName)
         {
+            _provider = provider;
             _connectionString = connectionString;
+            _metadataName = metadataName;
 
             if (!new MetadataService()
                 .UseDatabaseProvider(provider)
@@ -111,16 +119,18 @@ namespace DaJet.RabbitMQ
 
         public void Consume(CancellationToken token, Action<string> logger)
         {
+            _token = token;
             _logger = logger;
 
-            while (!token.IsCancellationRequested)
+            while (!_token.IsCancellationRequested)
             {
                 try
                 {
-                    // TODO: check data contract version and re-initialize 1C metadata if needed
+                    Initialize(_provider, _connectionString, _metadataName); // FIXME !!!
                     InitializeOrResetConnection();
                     InitializeOrResetConsumers();
-                    Task.Delay(TimeSpan.FromSeconds(60), token).Wait();
+                    Task.Delay(TimeSpan.FromSeconds(10)).Wait(_token);
+                    _logger("Consumer heartbeat.");
                 }
                 catch (Exception error)
                 {
@@ -264,10 +274,11 @@ namespace DaJet.RabbitMQ
             //}
         }
 
-
         private void ProcessMessage(object sender, BasicDeliverEventArgs args)
         {
             if (!(sender is EventingBasicConsumer consumer)) return;
+
+            bool success = true;
 
             try
             {
@@ -279,6 +290,28 @@ namespace DaJet.RabbitMQ
 
                     consumer.Model.BasicAck(args.DeliveryTag, false);
                 }
+            }
+            catch (Exception error)
+            {
+                success = false;
+                _logger(ExceptionHelper.GetErrorText(error));
+            }
+
+            if (!success)
+            {
+                NackMessage(in consumer, in args);
+                // Unsubscribe ? consumer.Model.BasicCancel(consumer.ConsumerTags[0]);
+            }
+        }
+        private void NackMessage(in EventingBasicConsumer consumer, in BasicDeliverEventArgs args)
+        {
+            if (!IsConsumerHealthy(consumer)) return;
+
+            Task.Delay(TimeSpan.FromSeconds(10)).Wait(_token);
+
+            try
+            {
+                consumer.Model.BasicNack(args.DeliveryTag, false, true);
             }
             catch (Exception error)
             {
