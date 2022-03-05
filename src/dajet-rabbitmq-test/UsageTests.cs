@@ -16,6 +16,7 @@ namespace DaJet.RabbitMQ.Test
         private const string INCOMING_QUEUE_NAME = "–егистр—ведений.“естова€¬ход€ща€ќчередь"; //"–егистр—ведений.¬ход€ща€ќчередь12";
         private const string OUTGOING_QUEUE_NAME = "–егистр—ведений.»сход€ща€ќчередь11";
         private const string MS_CONNECTION_STRING = "Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True";
+        private const string PG_CONNECTION_STRING = "Host=localhost;Port=5432;Database=dajet-messaging-pg;Username=postgres;Password=postgres;";
 
         [TestMethod] public void TestRmqMessageProducer()
         {
@@ -128,6 +129,47 @@ namespace DaJet.RabbitMQ.Test
         private void Logger(string message)
         {
             Console.WriteLine(message);
+        }
+
+        [TestMethod] public void Show_Consumer_Settings_MS()
+        {
+            if (!new MetadataService()
+                .UseConnectionString(MS_CONNECTION_STRING)
+                .UseDatabaseProvider(DatabaseProvider.SQLServer)
+                .TryOpenInfoBase(out InfoBase infoBase, out string error))
+            {
+                Console.WriteLine(error);
+                return;
+            }
+
+            ExchangePlanHelper settings = new ExchangePlanHelper(in infoBase, DatabaseProvider.SQLServer, MS_CONNECTION_STRING);
+            settings.ConfigureSelectScripts("ѕланќбмена.DaJetMessaging", "–егистр—ведений.Ќастройкиќбмена–»Ѕ");
+            List<string> queues = settings.GetIncomingQueueNames();
+
+            foreach (string name in queues)
+            {
+                Console.WriteLine(name);
+            }
+        }
+        [TestMethod] public void Show_Consumer_Settings_PG()
+        {
+            if (!new MetadataService()
+                .UseConnectionString(PG_CONNECTION_STRING)
+                .UseDatabaseProvider(DatabaseProvider.PostgreSQL)
+                .TryOpenInfoBase(out InfoBase infoBase, out string error))
+            {
+                Console.WriteLine(error);
+                return;
+            }
+
+            ExchangePlanHelper settings = new ExchangePlanHelper(in infoBase, DatabaseProvider.PostgreSQL, PG_CONNECTION_STRING);
+            settings.ConfigureSelectScripts("ѕланќбмена.DaJetMessaging", "–егистр—ведений.Ќастройкиќбмена–»Ѕ");
+            List<string> queues = settings.GetIncomingQueueNames();
+
+            foreach (string name in queues)
+            {
+                Console.WriteLine(name);
+            }
         }
     }
 }
