@@ -81,16 +81,18 @@ namespace DaJet.RabbitMQ
         private DatabaseProvider _provider;
 
         private CancellationToken _token;
-        
+
         public void Initialize(DatabaseProvider provider, string connectionString, string metadataName)
         {
             _provider = provider;
             _connectionString = connectionString;
             _metadataName = metadataName;
-
+        }
+        private void InitializeMetadata()
+        {
             if (!new MetadataService()
-                .UseDatabaseProvider(provider)
-                .UseConnectionString(connectionString)
+                .UseDatabaseProvider(_provider)
+                .UseConnectionString(_connectionString)
                 .TryOpenInfoBase(out InfoBase infoBase, out string error))
             {
                 throw new Exception(error);
@@ -98,10 +100,10 @@ namespace DaJet.RabbitMQ
 
             _yearOffset = infoBase.YearOffset;
 
-            _queue = infoBase.GetApplicationObjectByName(metadataName);
+            _queue = infoBase.GetApplicationObjectByName(_metadataName);
             if (_queue == null)
             {
-                throw new Exception($"Объект метаданных \"{metadataName}\" не найден.");
+                throw new Exception($"Объект метаданных \"{_metadataName}\" не найден.");
             }
 
             _version = GetDataContractVersion(in _queue);
@@ -126,7 +128,7 @@ namespace DaJet.RabbitMQ
             {
                 try
                 {
-                    Initialize(_provider, _connectionString, _metadataName); // FIXME !!!
+                    InitializeMetadata();
                     InitializeOrResetConnection();
                     InitializeOrResetConsumers();
                     Task.Delay(TimeSpan.FromSeconds(10)).Wait(_token);
@@ -300,7 +302,6 @@ namespace DaJet.RabbitMQ
             if (!success)
             {
                 NackMessage(in consumer, in args);
-                // Unsubscribe ? consumer.Model.BasicCancel(consumer.ConsumerTags[0]);
             }
         }
         private void NackMessage(in EventingBasicConsumer consumer, in BasicDeliverEventArgs args)

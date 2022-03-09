@@ -126,7 +126,7 @@ namespace DaJet.RabbitMQ.Test
                 consumer.Consume(stop.Token, Logger);
             }
         }
-        private void Logger(string message)
+        private static void Logger(string message)
         {
             Console.WriteLine(message);
         }

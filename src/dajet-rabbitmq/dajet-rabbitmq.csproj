@@ -12,6 +12,9 @@ Microsoft SQL Server and PostgreSQL are supported.</Description>
     <PackageReleaseNotes>1C:Enterprise 8 database RabbitMQ adapter.
 Adapter is based on usage of the DaJet.Data.Messaging and DaJet.Data.Mapping packages.
 Microsoft SQL Server and PostgreSQL are supported.</PackageReleaseNotes>
+    <PackageProjectUrl>https://github.com/zhichkin/dajet-rabbitmq</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/zhichkin/dajet-rabbitmq</RepositoryUrl>
+    <Version>0.1.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
