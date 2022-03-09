@@ -236,7 +236,14 @@ namespace DaJet.RabbitMQ
 
                     ReadOnlyMemory<byte> messageBody = GetMessageBody(in message, in serializer);
 
-                    Channel.BasicPublish(ExchangeName, RoutingKey, Properties, messageBody);
+                    if (string.IsNullOrWhiteSpace(RoutingKey))
+                    {
+                        Channel.BasicPublish(ExchangeName, message.MessageType, Properties, messageBody);
+                    }
+                    else
+                    {
+                        Channel.BasicPublish(ExchangeName, RoutingKey, Properties, messageBody);
+                    }
                     
                     produced++;
                 }

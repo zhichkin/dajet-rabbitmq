@@ -1,6 +1,7 @@
 using DaJet.Data.Mapping;
 using DaJet.Data.Messaging;
 using DaJet.Json;
+using DaJet.Logging;
 using DaJet.Metadata;
 using DaJet.Metadata.Model;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -123,12 +124,8 @@ namespace DaJet.RabbitMQ.Test
                 Console.WriteLine($"Pass: {consumer.Password}");
                 Console.WriteLine($"VHost: {consumer.VirtualHost}");
 
-                consumer.Consume(stop.Token, Logger);
+                consumer.Consume(stop.Token, FileLogger.Log);
             }
-        }
-        private static void Logger(string message)
-        {
-            Console.WriteLine(message);
         }
 
         [TestMethod] public void Show_Consumer_Settings_MS()
