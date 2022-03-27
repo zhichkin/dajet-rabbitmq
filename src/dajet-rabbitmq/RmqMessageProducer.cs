@@ -217,14 +217,12 @@ namespace DaJet.RabbitMQ
 
         public int Publish(IMessageConsumer consumer, EntityJsonSerializer serializer)
         {
-            int consumed = 0;
             int produced = 0;
 
             do
             {
-                consumed = 0;
-
                 consumer.TxBegin();
+
                 foreach (OutgoingMessageDataMapper message in consumer.Select())
                 {
                     if (ConnectionIsBlocked)
@@ -247,17 +245,16 @@ namespace DaJet.RabbitMQ
                     
                     produced++;
                 }
-                consumer.TxCommit();
-
-                consumed = consumer.RecordsAffected;
-
-                if (consumed > 0)
+                
+                if (consumer.RecordsAffected > 0)
                 {
                     if (!Channel.WaitForConfirms())
                     {
                         throw new Exception("WaitForConfirms error");
                     }
                 }
+
+                consumer.TxCommit();
             }
             while (consumer.RecordsAffected > 0);
 

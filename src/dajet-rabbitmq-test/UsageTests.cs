@@ -4,11 +4,14 @@ using DaJet.Json;
 using DaJet.Logging;
 using DaJet.Metadata;
 using DaJet.Metadata.Model;
+using DaJet.RabbitMQ.Handlers;
+using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
+using SqlServer = DaJet.Data.Messaging.SqlServer;
 
 namespace DaJet.RabbitMQ.Test
 {
@@ -166,6 +169,76 @@ namespace DaJet.RabbitMQ.Test
             foreach (string name in queues)
             {
                 Console.WriteLine(name);
+            }
+        }
+
+        [TestMethod] public void NEW_ProducerHandler()
+        {
+            MessageBrokerOptions options = new MessageBrokerOptions()
+            {
+                RoutingKey = "dajet-queue"
+            };
+
+            DatabaseMessage message = new DatabaseMessage()
+            {
+                MessageNumber = 1L,
+                Headers = "{\"Sender\":\"DaJet.RabbitMQ\",\"CC\":\"N001,N002\"}",
+                MessageType = "Справочник.Номенклатура",
+                MessageBody = "{\"test\":\"сообщение\"}"
+            };
+
+            using (var handler = new Handlers.RmqMessageProducer(Options.Create(options)))
+            {
+                handler.Initialize();
+
+                handler.Handle(in message);
+
+                if (handler.Confirm())
+                {
+                    Console.WriteLine($"Confirmed");
+                }
+            }
+        }
+        [TestMethod] public void NEW_Consumer_ProducerHandler()
+        {
+            if (!new MetadataService()
+                .UseConnectionString(MS_CONNECTION_STRING)
+                .UseDatabaseProvider(DatabaseProvider.SQLServer)
+                .TryOpenInfoBase(out InfoBase infoBase, out string error))
+            {
+                Console.WriteLine(error);
+                return;
+            }
+
+            ApplicationObject queue = infoBase.GetApplicationObjectByName($"РегистрСведений.ИсходящаяОчередь1");
+
+            DatabaseConsumerOptions db_options = new DatabaseConsumerOptions()
+            {
+                QueueTableName = queue.TableName,
+                ConnectionString = MS_CONNECTION_STRING,
+                MessagesPerTransaction = 1
+            };
+            foreach (MetadataProperty property in queue.Properties)
+            {
+                db_options.TableColumns.Add(property.Name, property.Fields[0].Name);
+            }
+
+            CancellationTokenSource source = new CancellationTokenSource();
+
+            IDbMessageConsumer consumer = new SqlServer.MsMessageConsumer(Options.Create(db_options));
+
+            MessageBrokerOptions mb_options = new MessageBrokerOptions()
+            {
+                ExchangeName = "РИБ.ERP",
+                ExchangeRole = ExchangeRoles.Dispatcher
+            };
+
+            var handler = new Handlers.RmqMessageProducer(Options.Create(mb_options));
+
+            using (handler)
+            {
+                handler.Initialize();
+                consumer.Consume(handler, source.Token);
             }
         }
     }

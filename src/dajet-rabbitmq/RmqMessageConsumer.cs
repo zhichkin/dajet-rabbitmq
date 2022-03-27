@@ -284,7 +284,7 @@ namespace DaJet.RabbitMQ
 
             try
             {
-                using (IMessageProducer producer = new MsMessageProducer(in _connectionString, _queue))
+                using (IMessageProducer producer = GetMessageProducer())
                 {
                     IncomingMessageDataMapper message = ProduceMessage(in args);
 
@@ -302,6 +302,17 @@ namespace DaJet.RabbitMQ
             if (!success)
             {
                 NackMessage(in consumer, in args);
+            }
+        }
+        private IMessageProducer GetMessageProducer()
+        {
+            if (_provider == DatabaseProvider.SQLServer)
+            {
+                return new MsMessageProducer(in _connectionString, _queue);
+            }
+            else
+            {
+                return new PgMessageProducer(in _connectionString, _queue);
             }
         }
         private void NackMessage(in EventingBasicConsumer consumer, in BasicDeliverEventArgs args)
