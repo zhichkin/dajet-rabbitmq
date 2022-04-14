@@ -4,20 +4,17 @@ using DaJet.Json;
 using DaJet.Logging;
 using DaJet.Metadata;
 using DaJet.Metadata.Model;
-using DaJet.RabbitMQ.Handlers;
-using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
-using SqlServer = DaJet.Data.Messaging.SqlServer;
 
 namespace DaJet.RabbitMQ.Test
 {
     [TestClass] public class UsageTests
     {
-        private const string INCOMING_QUEUE_NAME = "–егистр—ведений.“естова€¬ход€ща€ќчередь"; //"–егистр—ведений.¬ход€ща€ќчередь12";
+        private const string INCOMING_QUEUE_NAME = "–егистр—ведений.¬ход€ща€ќчередь11"; // "–егистр—ведений.“естова€¬ход€ща€ќчередь";
         private const string OUTGOING_QUEUE_NAME = "–егистр—ведений.»сход€ща€ќчередь11";
         private const string MS_CONNECTION_STRING = "Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True";
         private const string PG_CONNECTION_STRING = "Host=localhost;Port=5432;Database=dajet-messaging-pg;Username=postgres;Password=postgres;";
@@ -113,9 +110,11 @@ namespace DaJet.RabbitMQ.Test
             {
                 "–»Ѕ.MAIN.N001",
                 "–»Ѕ.MAIN.N002"
+                //"–»Ѕ.N001.MAIN",
+                //"–»Ѕ.N002.MAIN"
             };
 
-            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
             using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri, in queues))
             {
@@ -169,76 +168,6 @@ namespace DaJet.RabbitMQ.Test
             foreach (string name in queues)
             {
                 Console.WriteLine(name);
-            }
-        }
-
-        [TestMethod] public void NEW_ProducerHandler()
-        {
-            MessageBrokerOptions options = new MessageBrokerOptions()
-            {
-                RoutingKey = "dajet-queue"
-            };
-
-            DatabaseMessage message = new DatabaseMessage()
-            {
-                MessageNumber = 1L,
-                Headers = "{\"Sender\":\"DaJet.RabbitMQ\",\"CC\":\"N001,N002\"}",
-                MessageType = "—правочник.Ќоменклатура",
-                MessageBody = "{\"test\":\"сообщение\"}"
-            };
-
-            using (var handler = new Handlers.RmqMessageProducer(Options.Create(options)))
-            {
-                handler.Initialize();
-
-                handler.Handle(in message);
-
-                if (handler.Confirm())
-                {
-                    Console.WriteLine($"Confirmed");
-                }
-            }
-        }
-        [TestMethod] public void NEW_Consumer_ProducerHandler()
-        {
-            if (!new MetadataService()
-                .UseConnectionString(MS_CONNECTION_STRING)
-                .UseDatabaseProvider(DatabaseProvider.SQLServer)
-                .TryOpenInfoBase(out InfoBase infoBase, out string error))
-            {
-                Console.WriteLine(error);
-                return;
-            }
-
-            ApplicationObject queue = infoBase.GetApplicationObjectByName($"–егистр—ведений.»сход€ща€ќчередь1");
-
-            DatabaseConsumerOptions db_options = new DatabaseConsumerOptions()
-            {
-                QueueTableName = queue.TableName,
-                ConnectionString = MS_CONNECTION_STRING,
-                MessagesPerTransaction = 1
-            };
-            foreach (MetadataProperty property in queue.Properties)
-            {
-                db_options.TableColumns.Add(property.Name, property.Fields[0].Name);
-            }
-
-            CancellationTokenSource source = new CancellationTokenSource();
-
-            IDbMessageConsumer consumer = new SqlServer.MsMessageConsumer(Options.Create(db_options));
-
-            MessageBrokerOptions mb_options = new MessageBrokerOptions()
-            {
-                ExchangeName = "–»Ѕ.ERP",
-                ExchangeRole = ExchangeRoles.Dispatcher
-            };
-
-            var handler = new Handlers.RmqMessageProducer(Options.Create(mb_options));
-
-            using (handler)
-            {
-                handler.Initialize();
-                consumer.Consume(handler, source.Token);
             }
         }
     }

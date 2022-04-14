@@ -408,14 +408,26 @@ namespace DaJet.RabbitMQ
             message.MessageType = (args.BasicProperties.Type ?? string.Empty);
             message.MessageBody = (args.Body.Length == 0 ? string.Empty : Encoding.UTF8.GetString(args.Body.Span));
 
+            if (args.BasicProperties.Headers != null)
+            {
+                if (args.BasicProperties.Headers.TryGetValue("OperationType", out object value))
+                {
+                    if (value is byte[] operationType)
+                    {
+                        message.OperationType = Encoding.UTF8.GetString(operationType);
+                    }
+                }
+            }
+
             return message;
         }
         private IncomingMessageDataMapper ProduceMessage12(in BasicDeliverEventArgs args)
         {
             V12.IncomingMessage message = IncomingMessageDataMapper.Create(_version) as V12.IncomingMessage;
 
-            message.MessageNumber = DateTime.UtcNow.Ticks;
+            message.Uuid = Guid.NewGuid();
             message.DateTimeStamp = DateTime.Now.AddYears(_yearOffset);
+            message.MessageNumber = DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
             message.ErrorCount = 0;
             message.ErrorDescription = String.Empty;
             message.Headers = GetMessageHeaders(in args);

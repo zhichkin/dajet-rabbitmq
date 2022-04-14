@@ -376,36 +376,42 @@ namespace DaJet.RabbitMQ
 
             properties.Headers.Add("CC", message.Recipients.Split(',', StringSplitOptions.RemoveEmptyEntries));
         }
-        
-        private void ConfigureMessageProperties(in V1.OutgoingMessage message, IBasicProperties properties)
-        {
-            properties.Type = message.MessageType;
-            properties.MessageId = message.Uuid.ToString();
 
-            if (!string.IsNullOrWhiteSpace(message.Headers))
-            {
-                try
-                {
-                    Dictionary<string, string> headers = JsonSerializer.Deserialize<Dictionary<string, string>>(message.Headers);
-                    ConfigureMessageHeaders(in headers, properties);
-                }
-                catch (Exception error)
-                {
-                    throw new FormatException($"Message headers format exception. Message number: {{{message.MessageNumber}}}. Error message: {error.Message}");
-                }
-            }
-        }
         private void ConfigureMessageProperties(in V11.OutgoingMessage message, IBasicProperties properties)
         {
+            properties.AppId = message.Sender;
             properties.Type = message.MessageType;
             properties.MessageId = message.Uuid.ToString();
+
+            if (properties.Headers == null)
+            {
+                properties.Headers = new Dictionary<string, object>();
+            }
+            else
+            {
+                properties.Headers.Clear();
+            }
+
+            SetOperationTypeHeader(message, properties);
+
+            if (_exchangeRole == ExchangeRoles.Aggregator)
+            {
+                SetAggregatorCopyHeader(message, properties);
+            }
+            else if (_exchangeRole == ExchangeRoles.Dispatcher)
+            {
+                SetDispatcherCopyHeader(message, properties);
+            }
 
             if (!string.IsNullOrWhiteSpace(message.Headers))
             {
                 try
                 {
                     Dictionary<string, string> headers = JsonSerializer.Deserialize<Dictionary<string, string>>(message.Headers);
-                    ConfigureMessageHeaders(in headers, properties);
+                    foreach (var header in headers)
+                    {
+                        _ = properties.Headers.TryAdd(header.Key, header.Value);
+                    }
                 }
                 catch (Exception error)
                 {
@@ -413,7 +419,87 @@ namespace DaJet.RabbitMQ
                 }
             }
         }
+        private void SetOperationTypeHeader(in V11.OutgoingMessage message, IBasicProperties properties)
+        {
+            if (string.IsNullOrWhiteSpace(message.OperationType)) return;
+
+            if (properties.Headers == null)
+            {
+                properties.Headers = new Dictionary<string, object>();
+            }
+
+            if (!properties.Headers.TryAdd("OperationType", message.OperationType))
+            {
+                properties.Headers["OperationType"] = message.OperationType;
+            }
+        }
+        private void SetAggregatorCopyHeader(in V11.OutgoingMessage message, IBasicProperties properties)
+        {
+            if (string.IsNullOrWhiteSpace(message.Sender)) return;
+
+            properties.Headers.Add("CC", new string[] { message.Sender });
+        }
+        private void SetDispatcherCopyHeader(in V11.OutgoingMessage message, IBasicProperties properties)
+        {
+            if (string.IsNullOrWhiteSpace(message.Recipients)) return;
+
+            properties.Headers.Add("CC", message.Recipients.Split(',', StringSplitOptions.RemoveEmptyEntries));
+        }
+
         private void ConfigureMessageProperties(in V12.OutgoingMessage message, IBasicProperties properties)
+        {
+            properties.AppId = message.Sender;
+            properties.Type = message.MessageType;
+            properties.MessageId = message.Uuid.ToString();
+
+            if (properties.Headers == null)
+            {
+                properties.Headers = new Dictionary<string, object>();
+            }
+            else
+            {
+                properties.Headers.Clear();
+            }
+
+            if (_exchangeRole == ExchangeRoles.Aggregator)
+            {
+                SetAggregatorCopyHeader(message, properties);
+            }
+            else if (_exchangeRole == ExchangeRoles.Dispatcher)
+            {
+                SetDispatcherCopyHeader(message, properties);
+            }
+
+            if (!string.IsNullOrWhiteSpace(message.Headers))
+            {
+                try
+                {
+                    Dictionary<string, string> headers = JsonSerializer.Deserialize<Dictionary<string, string>>(message.Headers);
+                    foreach (var header in headers)
+                    {
+                        _ = properties.Headers.TryAdd(header.Key, header.Value);
+                    }
+                }
+                catch (Exception error)
+                {
+                    throw new FormatException($"Message headers format exception. Message number: {{{message.MessageNumber}}}. Error message: {error.Message}");
+                }
+            }
+        }
+        private void SetAggregatorCopyHeader(in V12.OutgoingMessage message, IBasicProperties properties)
+        {
+            if (string.IsNullOrWhiteSpace(message.Sender)) return;
+
+            properties.Headers.Add("CC", new string[] { message.Sender });
+        }
+        private void SetDispatcherCopyHeader(in V12.OutgoingMessage message, IBasicProperties properties)
+        {
+            if (string.IsNullOrWhiteSpace(message.Recipients)) return;
+
+            properties.Headers.Add("CC", message.Recipients.Split(',', StringSplitOptions.RemoveEmptyEntries));
+        }
+
+        private void ConfigureMessageProperties(in V1.OutgoingMessage message, IBasicProperties properties)
         {
             properties.Type = message.MessageType;
             properties.MessageId = message.Uuid.ToString();
@@ -444,37 +530,18 @@ namespace DaJet.RabbitMQ
 
             foreach (var header in headers)
             {
-                if (header.Key == "Sender")
-                {
-                    properties.AppId = header.Value;
-
-                    if (_exchangeRole == ExchangeRoles.Aggregator)
-                    {
-                        _ = properties.Headers.TryAdd("CC", new string[] { header.Value });
-                    }
-                }
-                else if (header.Key == "Recipients")
-                {
-                    if (_exchangeRole == ExchangeRoles.Aggregator)
-                    {
-                        continue;
-                    }
-                    else if (_exchangeRole == ExchangeRoles.Dispatcher)
-                    {
-                        _ = properties.Headers.TryAdd("CC", header.Value.Split(',', StringSplitOptions.RemoveEmptyEntries));
-                    }
-                    else
-                    {
-                        _ = properties.Headers.TryAdd(header.Key, header.Value);
-                    }
-                }
-                else if (header.Key == "CC")
+                if (header.Key == "CC")
                 {
                     _ = properties.Headers.TryAdd("CC", header.Value.Split(',', StringSplitOptions.RemoveEmptyEntries));
                 }
                 else if (header.Key == "BCC")
                 {
                     _ = properties.Headers.TryAdd("BCC", header.Value.Split(',', StringSplitOptions.RemoveEmptyEntries));
+                }
+                else if (header.Key == "Sender")
+                {
+                    properties.AppId = header.Value;
+                    _ = properties.Headers.TryAdd("Sender", header.Value);
                 }
                 else
                 {
