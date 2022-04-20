@@ -215,7 +215,7 @@ namespace DaJet.RabbitMQ
             return messagesSent;
         }
 
-        public int Publish(IMessageConsumer consumer, EntityJsonSerializer serializer)
+        public int Publish(IMessageConsumer consumer) // EntityJsonSerializer serializer
         {
             int produced = 0;
 
@@ -232,7 +232,7 @@ namespace DaJet.RabbitMQ
 
                     ConfigureMessageProperties(in message, Properties);
 
-                    ReadOnlyMemory<byte> messageBody = GetMessageBody(in message, in serializer);
+                    ReadOnlyMemory<byte> messageBody = GetMessageBody(in message); // in serializer
 
                     if (string.IsNullOrWhiteSpace(RoutingKey))
                     {
@@ -261,7 +261,7 @@ namespace DaJet.RabbitMQ
             return produced;
         }
         
-        private ReadOnlyMemory<byte> GetMessageBody(in OutgoingMessageDataMapper message, in EntityJsonSerializer serializer)
+        private ReadOnlyMemory<byte> GetMessageBody(in OutgoingMessageDataMapper message) // in EntityJsonSerializer serializer
         {
             int bufferSize = message.MessageBody.Length * 2; // char == 2 bytes
 
@@ -279,27 +279,27 @@ namespace DaJet.RabbitMQ
 
             ReadOnlyMemory<byte> messageBody = new ReadOnlyMemory<byte>(_buffer, 0, encoded);
 
-            if (messageBody.IsEmpty)
-            {
-                if (message is V11.OutgoingMessage message11)
-                {
-                    messageBody = serializer.Serialize(message.MessageType, message11.Reference);
+            //if (messageBody.IsEmpty)
+            //{
+            //    if (message is V11.OutgoingMessage message11)
+            //    {
+            //        messageBody = serializer.Serialize(message.MessageType, message11.Reference);
 
-                    if (messageBody.IsEmpty)
-                    {
-                        messageBody = serializer.SerializeAsObjectDeletion(message.MessageType, message11.Reference);
-                    }
-                }
-                else if (message is V12.OutgoingMessage message12)
-                {
-                    messageBody = serializer.Serialize(message.MessageType, message12.Reference);
+            //        if (messageBody.IsEmpty)
+            //        {
+            //            messageBody = serializer.SerializeAsObjectDeletion(message.MessageType, message11.Reference);
+            //        }
+            //    }
+            //    else if (message is V12.OutgoingMessage message12)
+            //    {
+            //        messageBody = serializer.Serialize(message.MessageType, message12.Reference);
 
-                    if (messageBody.IsEmpty)
-                    {
-                        messageBody = serializer.SerializeAsObjectDeletion(message.MessageType, message12.Reference);
-                    }
-                }
-            }
+            //        if (messageBody.IsEmpty)
+            //        {
+            //            messageBody = serializer.SerializeAsObjectDeletion(message.MessageType, message12.Reference);
+            //        }
+            //    }
+            //}
             
             return messageBody;
         }
