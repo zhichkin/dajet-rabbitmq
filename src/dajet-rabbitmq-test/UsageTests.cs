@@ -64,7 +64,7 @@ namespace DaJet.RabbitMQ.Test
                 {
                     producer.Initialize(ExchangeRoles.Dispatcher);
 
-                    int published = producer.Publish(consumer, serializer);
+                    int published = 0;//producer.Publish(consumer, serializer);
 
                     Console.WriteLine($"Published {published} messages.");
                 }

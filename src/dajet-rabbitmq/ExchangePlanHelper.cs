@@ -14,19 +14,13 @@ namespace DaJet.RabbitMQ
             "SELECT TOP 1 _Code FROM {EXCHANGE_PLAN_TABLE} WHERE _PredefinedID > 0x00000000000000000000000000000000;";
 
         private const string MS_SENDER_NODES_SELECT_TEMPLATE =
-            "SELECT T1._Code FROM {EXCHANGE_PLAN_TABLE} AS T1 " +
-            "INNER JOIN {INFORMATION_REGISTER_TABLE} AS T2 " +
-            "ON T1._IDRRef = T2.{NODE_REFERENCE} " +
-            "WHERE T1._Marked = 0x00 AND T2.{USE_RABBITMQ} = 0x01;";
+            "SELECT _Code FROM {EXCHANGE_PLAN_TABLE} WHERE _Marked = 0x00 AND _PredefinedID = 0x00000000000000000000000000000000;";
 
         private const string PG_THIS_NODE_SELECT_TEMPLATE =
             "SELECT CAST(_code AS varchar) FROM {EXCHANGE_PLAN_TABLE} WHERE _predefinedid > E'\\\\x00000000000000000000000000000000' LIMIT 1;";
 
         private const string PG_SENDER_NODES_SELECT_TEMPLATE =
-            "SELECT CAST(\"T1\"._code AS varchar) FROM {EXCHANGE_PLAN_TABLE} AS \"T1\" " +
-            "INNER JOIN {INFORMATION_REGISTER_TABLE} AS \"T2\" " +
-            "ON \"T1\"._idrref = \"T2\".{NODE_REFERENCE} " +
-            "WHERE \"T1\"._marked = FALSE AND \"T2\".{USE_RABBITMQ} = TRUE;";
+            "SELECT CAST(_code AS varchar) FROM {EXCHANGE_PLAN_TABLE} WHERE _marked = FALSE AND _predefinedid = E'\\\\x00000000000000000000000000000000';";
 
         #endregion
 
