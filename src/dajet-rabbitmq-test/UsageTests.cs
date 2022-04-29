@@ -4,6 +4,7 @@ using DaJet.Json;
 using DaJet.Logging;
 using DaJet.Metadata;
 using DaJet.Metadata.Model;
+using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.Collections.Generic;
@@ -114,10 +115,21 @@ namespace DaJet.RabbitMQ.Test
                 //"–»¡.N002.MAIN"
             };
 
-            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            FileLogger.UseCatalog("C:\\temp");
+            FileLogger.UseFileName("rmq-test");
+
+            IOptions<RmqConsumerOptions> options = Options.Create(
+                new RmqConsumerOptions()
+                {
+                    Heartbeat = 10
+                });
+
+            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
             using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri, in queues))
             {
+                consumer.Configure(options);
+
                 consumer.Initialize(DatabaseProvider.SQLServer, MS_CONNECTION_STRING, INCOMING_QUEUE_NAME);
 
                 Console.WriteLine($"Host: {consumer.HostName}");

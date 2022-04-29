@@ -1,6 +1,7 @@
 ﻿using DaJet.Data.Messaging;
 using DaJet.Metadata;
 using DaJet.Metadata.Model;
+using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using System;
@@ -82,6 +83,12 @@ namespace DaJet.RabbitMQ
 
         private CancellationToken _token;
 
+        public IOptions<RmqConsumerOptions> Options { get; private set; }
+        public void Configure(IOptions<RmqConsumerOptions> options)
+        {
+            Options = options;
+        }
+
         public void Initialize(DatabaseProvider provider, string connectionString, string metadataName)
         {
             _provider = provider;
@@ -131,8 +138,17 @@ namespace DaJet.RabbitMQ
                     InitializeMetadata();
                     InitializeOrResetConnection();
                     InitializeOrResetConsumers();
-                    Task.Delay(TimeSpan.FromSeconds(10)).Wait(_token);
-                    _logger("Consumer heartbeat.");
+
+                    int heartbeat = 300; // seconds
+
+                    if (Options != null && Options.Value != null)
+                    {
+                        heartbeat = Options.Value.Heartbeat;
+                    }
+
+                    Task.Delay(TimeSpan.FromSeconds(heartbeat)).Wait(_token);
+
+                    _logger("Consumer heartbeat."); // TODO: replace with consumed message count
                 }
                 catch (Exception error)
                 {
