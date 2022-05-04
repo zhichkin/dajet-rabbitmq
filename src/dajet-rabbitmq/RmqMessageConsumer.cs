@@ -33,14 +33,9 @@ namespace DaJet.RabbitMQ
         public string UserName { get; private set; } = "guest";
         public string Password { get; private set; } = "guest";
 
-        public RmqMessageConsumer(in string uri, in List<string> queues)
+        public RmqMessageConsumer(in string uri)
         {
             ParseRmqUri(in uri);
-
-            foreach (string queue in queues)
-            {
-                _ = Consumers.TryAdd(queue, null);
-            }
         }
         private void ParseRmqUri(in string amqpUri)
         {
@@ -82,6 +77,7 @@ namespace DaJet.RabbitMQ
         private DatabaseProvider _provider;
 
         private CancellationToken _token;
+        private int _consumed = 0;
 
         public IOptions<RmqConsumerOptions> Options { get; private set; }
         public void Configure(IOptions<RmqConsumerOptions> options)
@@ -148,7 +144,9 @@ namespace DaJet.RabbitMQ
 
                     Task.Delay(TimeSpan.FromSeconds(heartbeat)).Wait(_token);
 
-                    _logger("Consumer heartbeat."); // TODO: replace with consumed message count
+                    int consumed = Interlocked.Exchange(ref _consumed, 0);
+
+                    _logger($"Consumed {consumed} messages.");
                 }
                 catch (Exception error)
                 {
@@ -203,6 +201,8 @@ namespace DaJet.RabbitMQ
         
         private void InitializeOrResetConsumers()
         {
+            UpdateConsumers();
+
             foreach (var consumer in Consumers)
             {
                 if (consumer.Value == null)
@@ -212,6 +212,42 @@ namespace DaJet.RabbitMQ
                 else if (!IsConsumerHealthy(consumer.Value))
                 {
                     ResetConsumerTask(consumer.Key);
+                }
+            }
+        }
+        private void UpdateConsumers()
+        {
+            List<string> settings = Options.Value.Queues;
+
+            List<string> consumers = new List<string>(Consumers.Count);
+            foreach (var item in Consumers)
+            {
+                consumers.Add(item.Key);
+            }
+            
+            ListMergeHelper.Compare(consumers, settings, out List<string> delete, out List<string> insert);
+
+            if (delete.Count == 0 && insert.Count == 0)
+            {
+                _logger("Queue consumer list is not changed.");
+                return;
+            }
+
+            foreach (string queueName in insert)
+            {
+                if (Consumers.TryAdd(queueName, null))
+                {
+                    _logger($"Queue {queueName} consumer is added.");
+                }
+            }
+
+            foreach (string queueName in delete)
+            {
+                DisposeConsumer(queueName);
+                
+                if (Consumers.TryRemove(queueName, out EventingBasicConsumer consumer))
+                {
+                    _logger($"Queue {queueName} consumer is removed.");
                 }
             }
         }
@@ -230,11 +266,10 @@ namespace DaJet.RabbitMQ
 
             string consumerTag = null;
             EventingBasicConsumer consumer = null;
+            IModel channel = Connection.CreateModel();
 
             try
             {
-                IModel channel = Connection.CreateModel();
-                
                 channel.BasicQos(0, 1, false);
 
                 consumer = new EventingBasicConsumer(channel);
@@ -242,11 +277,20 @@ namespace DaJet.RabbitMQ
 
                 consumerTag = channel.BasicConsume(queue, false, consumer);
             }
-            catch
+            catch (Exception error)
             {
                 if (consumerTag != null)
                 {
                     DisposeConsumer(consumerTag);
+                }
+                else
+                {
+                    DisposeConsumer(consumer);
+                }
+
+                if (error.Message.Contains(queue))
+                {
+                    _logger(error.Message); // queue is not found by RabbitMQ
                 }
 
                 throw; // Завершаем поток (задачу) с ошибкой
@@ -276,12 +320,8 @@ namespace DaJet.RabbitMQ
             if (consumer != null)
             {
                 consumer.Received -= ProcessMessage;
-
-                if (consumer.Model != null)
-                {
-                    consumer.Model.Dispose();
-                    consumer.Model = null;
-                }
+                consumer.Model?.Dispose();
+                consumer.Model = null;
 
                 _ = Consumers.TryUpdate(queueName, null, consumer);
             }
@@ -290,6 +330,16 @@ namespace DaJet.RabbitMQ
             //{
             //    consumer.Model.BasicCancel(consumer.ConsumerTags[0]);
             //}
+        }
+        private void DisposeConsumer(EventingBasicConsumer consumer)
+        {
+            if (consumer != null)
+            {
+                consumer.Received -= ProcessMessage;
+                consumer.Model?.Dispose();
+                consumer.Model = null;
+                consumer = null;
+            }
         }
 
         private void ProcessMessage(object sender, BasicDeliverEventArgs args)
@@ -307,6 +357,8 @@ namespace DaJet.RabbitMQ
                     producer.Insert(in message);
 
                     consumer.Model.BasicAck(args.DeliveryTag, false);
+
+                    Interlocked.Increment(ref _consumed);
                 }
             }
             catch (Exception error)

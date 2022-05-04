@@ -43,23 +43,23 @@ namespace DaJet.RabbitMQ
         {
             _mappings.Clear();
 
-            ApplicationObject settings = _infoBase.GetApplicationObjectByName(registerName);
+            //ApplicationObject settings = _infoBase.GetApplicationObjectByName(registerName);
             ApplicationObject publication = _infoBase.GetApplicationObjectByName(publicationName);
 
             _mappings.Add("{EXCHANGE_PLAN_TABLE}", publication.TableName);
-            _mappings.Add("{INFORMATION_REGISTER_TABLE}", settings.TableName);
+            //_mappings.Add("{INFORMATION_REGISTER_TABLE}", settings.TableName);
 
-            foreach (MetadataProperty property in settings.Properties)
-            {
-                if (property.Name == "Узел")
-                {
-                    _mappings.Add("{NODE_REFERENCE}", property.Fields[0].Name);
-                }
-                else if (property.Name == "ИспользоватьОбменДаннымиRabbitMQ")
-                {
-                    _mappings.Add("{USE_RABBITMQ}", property.Fields[0].Name);
-                }
-            }
+            //foreach (MetadataProperty property in settings.Properties)
+            //{
+            //    if (property.Name == "Узел")
+            //    {
+            //        _mappings.Add("{NODE_REFERENCE}", property.Fields[0].Name);
+            //    }
+            //    else if (property.Name == "ИспользоватьОбменДаннымиRabbitMQ")
+            //    {
+            //        _mappings.Add("{USE_RABBITMQ}", property.Fields[0].Name);
+            //    }
+            //}
 
             if (_provider == DatabaseProvider.SQLServer)
             {

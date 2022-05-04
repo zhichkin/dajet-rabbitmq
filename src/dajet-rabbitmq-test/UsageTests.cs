@@ -10,6 +10,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
+using System.Timers;
 
 namespace DaJet.RabbitMQ.Test
 {
@@ -107,28 +108,23 @@ namespace DaJet.RabbitMQ.Test
         [TestMethod] public void TestRmqMessageConsumer()
         {
             string uri = "amqp://guest:guest@localhost:5672/%2F";
-            List<string> queues = new List<string>()
-            {
-                "–»¡.MAIN.N001",
-                "–»¡.MAIN.N002"
-                //"–»¡.N001.MAIN",
-                //"–»¡.N002.MAIN"
-            };
-
+            
             FileLogger.UseCatalog("C:\\temp");
             FileLogger.UseFileName("rmq-test");
 
-            IOptions<RmqConsumerOptions> options = Options.Create(
-                new RmqConsumerOptions()
-                {
-                    Heartbeat = 10
-                });
-
-            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-
-            using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri, in queues))
+            _options = Options.Create(new RmqConsumerOptions()
             {
-                consumer.Configure(options);
+                Heartbeat = 10,
+                Queues = GetIncomingQueueSettings()
+            });
+
+            StartConsumerOptionsUpdateService();
+
+            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(180));
+
+            using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri))
+            {
+                consumer.Configure(_options);
 
                 consumer.Initialize(DatabaseProvider.SQLServer, MS_CONNECTION_STRING, INCOMING_QUEUE_NAME);
 
@@ -140,6 +136,45 @@ namespace DaJet.RabbitMQ.Test
 
                 consumer.Consume(stop.Token, FileLogger.Log);
             }
+
+            StopConsumerOptionsUpdateService();
+        }
+        
+        private System.Timers.Timer _timer;
+        private IOptions<RmqConsumerOptions> _options;
+        private void StartConsumerOptionsUpdateService()
+        {
+            _timer = new System.Timers.Timer();
+            _timer.Elapsed += UpdateConsumerOptions;
+            _timer.Interval = _options.Value.Heartbeat * 1000;
+            _timer.Start();
+        }
+        private void StopConsumerOptionsUpdateService()
+        {
+            _timer?.Stop();
+            _timer?.Dispose();
+        }
+        private void UpdateConsumerOptions(object sender, ElapsedEventArgs args)
+        {
+            _options.Value.Queues = GetIncomingQueueSettings();
+        }
+        private List<string> GetIncomingQueueSettings()
+        {
+            List<string> queues = new List<string>();
+
+            if (!new MetadataService()
+                .UseConnectionString(MS_CONNECTION_STRING)
+                .UseDatabaseProvider(DatabaseProvider.SQLServer)
+                .TryOpenInfoBase(out InfoBase infoBase, out string error))
+            {
+                Console.WriteLine(error);
+                return queues;
+            }
+
+            ExchangePlanHelper settings = new ExchangePlanHelper(in infoBase, DatabaseProvider.SQLServer, MS_CONNECTION_STRING);
+            settings.ConfigureSelectScripts("œÎ‡ÌŒ·ÏÂÌ‡.DaJetMessaging", "test.test");
+            
+            return settings.GetIncomingQueueNames();
         }
 
         [TestMethod] public void Show_Consumer_Settings_MS()
