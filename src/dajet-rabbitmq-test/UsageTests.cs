@@ -4,6 +4,7 @@ using DaJet.Json;
 using DaJet.Logging;
 using DaJet.Metadata;
 using DaJet.Metadata.Model;
+using DaJet.Vector;
 using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
@@ -215,6 +216,57 @@ namespace DaJet.RabbitMQ.Test
             foreach (string name in queues)
             {
                 Console.WriteLine(name);
+            }
+        }
+
+
+        private const string DATABASE_FILE = "C:\\temp\\dajet-vector.db";
+        [TestMethod] public void SelectSqliteVector()
+        {
+            SqliteVector db = new SqliteVector(DATABASE_FILE);
+            
+            long vector = db.SelectVector("ЦБ", "Справочник.Номенклатура");
+
+            Console.WriteLine($"Vector = {vector}");
+
+        }
+        [TestMethod] public void InsertSqliteVector()
+        {
+            SqliteVector db = new SqliteVector(DATABASE_FILE);
+
+            long vector = db.SelectVector("ЦБ", "Справочник.Номенклатура");
+
+            if (vector > 0)
+            {
+                return;
+            }
+
+            if (db.InsertVector("ЦБ", "Справочник.Номенклатура", 123))
+            {
+                Console.WriteLine($"Vector inserted.");
+            }
+        }
+        [TestMethod] public void UpdateSqliteVector()
+        {
+            SqliteVector db = new SqliteVector(DATABASE_FILE);
+
+            long vector = db.SelectVector("ЦБ", "Справочник.Номенклатура");
+
+            if (vector > 0)
+            {
+                if (db.UpdateVector("ЦБ", "Справочник.Номенклатура", ++vector))
+                {
+                    Console.WriteLine($"Vector updated.");
+                }
+            }
+        }
+        [TestMethod] public void DeleteSqliteVector()
+        {
+            SqliteVector db = new SqliteVector(DATABASE_FILE);
+
+            if (db.DeleteVector("ЦБ", "Справочник.Номенклатура"))
+            {
+                Console.WriteLine($"Vector deleted.");
             }
         }
     }
