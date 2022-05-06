@@ -269,5 +269,90 @@ namespace DaJet.RabbitMQ.Test
                 Console.WriteLine($"Vector deleted.");
             }
         }
+
+        [TestMethod] public void InsertVectorCollision()
+        {
+            SqliteVector db = new SqliteVector(DATABASE_FILE);
+
+            if (db.InsertCollision("0095", "Справочник.Валюты", 1234567L))
+            {
+                Console.WriteLine("Collision inserted.");
+            }
+        }
+        [TestMethod] public void SelectVectorCollision()
+        {
+            SqliteVector db = new SqliteVector(DATABASE_FILE);
+
+            VectorCollision collision = db.SelectCollision("0095", "Справочник.Валюты");
+            {
+                Console.WriteLine($"{collision.Timestamp:yyyy-MM-ddTHH:mm:ss} [{collision.Node}] {collision.Type} {collision.Vector}");
+            }
+        }
+
+        [TestMethod] public void BulkInsertSqliteVector()
+        {
+            SqliteVector db = new SqliteVector(DATABASE_FILE);
+
+            Stopwatch watch = new Stopwatch();
+            watch.Start();
+
+            int counter = 0;
+            
+            for (int i = 0; i < 10000; i++)
+            {
+                if (db.InsertVector("ЦБ", "Справочник." + (i + 1).ToString(), (i + 1)))
+                {
+                    counter++;
+                }
+            }
+
+            watch.Stop();
+
+            Console.WriteLine($"Inserted {counter} vectors in {watch.ElapsedMilliseconds} ms.");
+        }
+        [TestMethod] public void BulkUpdateSqliteVector()
+        {
+            SqliteVector db = new SqliteVector(DATABASE_FILE);
+
+            Stopwatch watch = new Stopwatch();
+            watch.Start();
+
+            int counter = 0;
+
+            for (int i = 0; i < 10000; i++)
+            {
+                if (db.UpdateVector("ЦБ", "Справочник." + (i + 1).ToString(), (i + 100)))
+                {
+                    counter++;
+                }
+            }
+
+            watch.Stop();
+
+            Console.WriteLine($"Updated {counter} vectors in {watch.ElapsedMilliseconds} ms.");
+        }
+        [TestMethod] public void BulkSelectSqliteVector()
+        {
+            SqliteVector db = new SqliteVector(DATABASE_FILE);
+
+            Stopwatch watch = new Stopwatch();
+            watch.Start();
+
+            int counter = 0;
+
+            for (int i = 0; i < 10000; i++)
+            {
+                long vector = db.SelectVector("ЦБ", "Справочник." + (i + 1).ToString());
+                
+                if (vector > 0)
+                {
+                    counter++;
+                }
+            }
+
+            watch.Stop();
+
+            Console.WriteLine($"Found {counter} vectors in {watch.ElapsedMilliseconds} ms.");
+        }
     }
 }

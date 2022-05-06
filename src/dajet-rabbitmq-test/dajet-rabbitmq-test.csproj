@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\dajet-rabbitmq\dajet-rabbitmq.csproj" />
+    <ProjectReference Include="..\dajet-telegram-bot\dajet-telegram-bot.csproj" />
     <ProjectReference Include="..\dajet-vector\dajet-vector.csproj" />
   </ItemGroup>
 
