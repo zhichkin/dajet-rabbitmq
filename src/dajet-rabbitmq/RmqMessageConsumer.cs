@@ -1,6 +1,7 @@
 ﻿using DaJet.Data.Messaging;
 using DaJet.Metadata;
 using DaJet.Metadata.Model;
+using DaJet.Vector;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
@@ -16,6 +17,7 @@ using V1 = DaJet.Data.Messaging.V1;
 using V10 = DaJet.Data.Messaging.V10;
 using V11 = DaJet.Data.Messaging.V11;
 using V12 = DaJet.Data.Messaging.V12;
+using OptionsFactory = Microsoft.Extensions.Options.Options;
 
 namespace DaJet.RabbitMQ
 {
@@ -79,10 +81,23 @@ namespace DaJet.RabbitMQ
         private CancellationToken _token;
         private int _consumed = 0;
 
+        private IDaJetVectorService _vectorService;
+
         public IOptions<RmqConsumerOptions> Options { get; private set; }
         public void Configure(IOptions<RmqConsumerOptions> options)
         {
             Options = options;
+
+            if (Options.Value.UseVectorService && !string.IsNullOrWhiteSpace(Options.Value.VectorDatabase))
+            {
+                VectorServiceOptions settings = new VectorServiceOptions()
+                {
+                    ConnectionString = Options.Value.VectorDatabase
+                };
+                IOptions<VectorServiceOptions> vectorOptions = OptionsFactory.Create(settings);
+                
+                _vectorService = new VectorService(vectorOptions);
+            }
         }
 
         public void Initialize(DatabaseProvider provider, string connectionString, string metadataName)
@@ -356,8 +371,13 @@ namespace DaJet.RabbitMQ
 
                     producer.Insert(in message);
 
-                    consumer.Model.BasicAck(args.DeliveryTag, false);
+                    if (Options.Value.UseVectorService)
+                    {
+                        ValidateVector(in args);
+                    }
 
+                    consumer.Model.BasicAck(args.DeliveryTag, false);
+                    
                     Interlocked.Increment(ref _consumed);
                 }
             }
@@ -535,6 +555,37 @@ namespace DaJet.RabbitMQ
             }
 
             return JsonSerializer.Serialize(headers);
+        }
+
+        private void ValidateVector(in BasicDeliverEventArgs args)
+        {
+            if (args == null || args.BasicProperties == null)
+            {
+                return;
+            }
+
+            try
+            {
+                TryValidateVector(args.BasicProperties);
+            }
+            catch (Exception error)
+            {
+                _logger(ExceptionHelper.GetErrorText(error));
+            }
+        }
+        private void TryValidateVector(IBasicProperties headers)
+        {
+            string node = headers.AppId;
+            string type = headers.Type;
+
+            if (!long.TryParse(headers.MessageId, out long vector) || vector <= 0L)
+            {
+                return;
+            }
+            if (string.IsNullOrEmpty(node)) { return; }
+            if (string.IsNullOrEmpty(type)) { return; }
+
+            _ = _vectorService?.ValidateVector(node, type, vector);
         }
     }
 }

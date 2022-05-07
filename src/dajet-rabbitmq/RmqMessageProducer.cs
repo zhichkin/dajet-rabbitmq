@@ -260,7 +260,28 @@ namespace DaJet.RabbitMQ
 
             return produced;
         }
-        
+
+        public void Publish(OutgoingMessageDataMapper message)
+        {
+            ConfigureMessageProperties(in message, Properties);
+
+            ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
+
+            if (string.IsNullOrWhiteSpace(RoutingKey))
+            {
+                Channel.BasicPublish(ExchangeName, message.MessageType, Properties, messageBody);
+            }
+            else
+            {
+                Channel.BasicPublish(ExchangeName, RoutingKey, Properties, messageBody);
+            }
+
+            if (!Channel.WaitForConfirms())
+            {
+                throw new Exception("WaitForConfirms error");
+            }
+        }
+
         private ReadOnlyMemory<byte> GetMessageBody(in OutgoingMessageDataMapper message) // in EntityJsonSerializer serializer
         {
             int bufferSize = message.MessageBody.Length * 2; // char == 2 bytes
@@ -328,7 +349,7 @@ namespace DaJet.RabbitMQ
         {
             properties.AppId = message.Sender;
             properties.Type = message.MessageType;
-            properties.MessageId = message.Uuid.ToString();
+            properties.MessageId = message.MessageNumber.ToString();
 
             if (properties.Headers == null)
             {
@@ -381,7 +402,7 @@ namespace DaJet.RabbitMQ
         {
             properties.AppId = message.Sender;
             properties.Type = message.MessageType;
-            properties.MessageId = message.Uuid.ToString();
+            properties.MessageId = message.MessageNumber.ToString();
 
             if (properties.Headers == null)
             {
@@ -450,7 +471,7 @@ namespace DaJet.RabbitMQ
         {
             properties.AppId = message.Sender;
             properties.Type = message.MessageType;
-            properties.MessageId = message.Uuid.ToString();
+            properties.MessageId = message.MessageNumber.ToString();
 
             if (properties.Headers == null)
             {
@@ -502,7 +523,7 @@ namespace DaJet.RabbitMQ
         private void ConfigureMessageProperties(in V1.OutgoingMessage message, IBasicProperties properties)
         {
             properties.Type = message.MessageType;
-            properties.MessageId = message.Uuid.ToString();
+            properties.MessageId = message.MessageNumber.ToString();
 
             if (!string.IsNullOrWhiteSpace(message.Headers))
             {

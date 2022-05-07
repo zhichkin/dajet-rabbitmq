@@ -1,5 +1,6 @@
 using DaJet.Data.Mapping;
 using DaJet.Data.Messaging;
+using DaJet.Data.Messaging.V10;
 using DaJet.Json;
 using DaJet.Logging;
 using DaJet.Metadata;
@@ -17,7 +18,7 @@ namespace DaJet.RabbitMQ.Test
 {
     [TestClass] public class UsageTests
     {
-        private const string INCOMING_QUEUE_NAME = "РегистрСведений.ВходящаяОчередь11"; // "РегистрСведений.ТестоваяВходящаяОчередь";
+        private const string INCOMING_QUEUE_NAME = "РегистрСведений.ВходящаяОчередь10"; // "РегистрСведений.ТестоваяВходящаяОчередь";
         private const string OUTGOING_QUEUE_NAME = "РегистрСведений.ИсходящаяОчередь11";
         private const string MS_CONNECTION_STRING = "Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True";
         private const string PG_CONNECTION_STRING = "Host=localhost;Port=5432;Database=dajet-messaging-pg;Username=postgres;Password=postgres;";
@@ -223,7 +224,11 @@ namespace DaJet.RabbitMQ.Test
         private const string DATABASE_FILE = "C:\\temp\\dajet-vector.db";
         [TestMethod] public void SelectSqliteVector()
         {
-            SqliteVector db = new SqliteVector(DATABASE_FILE);
+            VectorService db = new VectorService(
+                Options.Create(new VectorServiceOptions()
+                {
+                    ConnectionString = DATABASE_FILE
+                }));
             
             long vector = db.SelectVector("ЦБ", "Справочник.Номенклатура");
 
@@ -232,7 +237,11 @@ namespace DaJet.RabbitMQ.Test
         }
         [TestMethod] public void InsertSqliteVector()
         {
-            SqliteVector db = new SqliteVector(DATABASE_FILE);
+            VectorService db = new VectorService(
+                Options.Create(new VectorServiceOptions()
+                {
+                    ConnectionString = DATABASE_FILE
+                }));
 
             long vector = db.SelectVector("ЦБ", "Справочник.Номенклатура");
 
@@ -248,7 +257,11 @@ namespace DaJet.RabbitMQ.Test
         }
         [TestMethod] public void UpdateSqliteVector()
         {
-            SqliteVector db = new SqliteVector(DATABASE_FILE);
+            VectorService db = new VectorService(
+                Options.Create(new VectorServiceOptions()
+                {
+                    ConnectionString = DATABASE_FILE
+                }));
 
             long vector = db.SelectVector("ЦБ", "Справочник.Номенклатура");
 
@@ -262,7 +275,11 @@ namespace DaJet.RabbitMQ.Test
         }
         [TestMethod] public void DeleteSqliteVector()
         {
-            SqliteVector db = new SqliteVector(DATABASE_FILE);
+            VectorService db = new VectorService(
+                Options.Create(new VectorServiceOptions()
+                {
+                    ConnectionString = DATABASE_FILE
+                }));
 
             if (db.DeleteVector("ЦБ", "Справочник.Номенклатура"))
             {
@@ -272,26 +289,38 @@ namespace DaJet.RabbitMQ.Test
 
         [TestMethod] public void InsertVectorCollision()
         {
-            SqliteVector db = new SqliteVector(DATABASE_FILE);
+            VectorService db = new VectorService(
+                Options.Create(new VectorServiceOptions()
+                {
+                    ConnectionString = DATABASE_FILE
+                }));
 
-            if (db.InsertCollision("0095", "Справочник.Валюты", 1234567L))
+            if (db.InsertCollision("0095", "Справочник.Валюты", 1234567L, 7654321L))
             {
                 Console.WriteLine("Collision inserted.");
             }
         }
         [TestMethod] public void SelectVectorCollision()
         {
-            SqliteVector db = new SqliteVector(DATABASE_FILE);
+            VectorService db = new VectorService(
+                Options.Create(new VectorServiceOptions()
+                {
+                    ConnectionString = DATABASE_FILE
+                }));
 
-            VectorCollision collision = db.SelectCollision("0095", "Справочник.Валюты");
+            CollisionInfo collision = db.SelectCollision();
             {
-                Console.WriteLine($"{collision.Timestamp:yyyy-MM-ddTHH:mm:ss} [{collision.Node}] {collision.Type} {collision.Vector}");
+                Console.WriteLine($"{collision.Timestamp:yyyy-MM-ddTHH:mm:ss} [{collision.Node}] {collision.Type} ({collision.OldVector}) ({collision.NewVector})");
             }
         }
 
         [TestMethod] public void BulkInsertSqliteVector()
         {
-            SqliteVector db = new SqliteVector(DATABASE_FILE);
+            VectorService db = new VectorService(
+                Options.Create(new VectorServiceOptions()
+                {
+                    ConnectionString = DATABASE_FILE
+                }));
 
             Stopwatch watch = new Stopwatch();
             watch.Start();
@@ -312,7 +341,11 @@ namespace DaJet.RabbitMQ.Test
         }
         [TestMethod] public void BulkUpdateSqliteVector()
         {
-            SqliteVector db = new SqliteVector(DATABASE_FILE);
+            VectorService db = new VectorService(
+                Options.Create(new VectorServiceOptions()
+                {
+                    ConnectionString = DATABASE_FILE
+                }));
 
             Stopwatch watch = new Stopwatch();
             watch.Start();
@@ -333,7 +366,11 @@ namespace DaJet.RabbitMQ.Test
         }
         [TestMethod] public void BulkSelectSqliteVector()
         {
-            SqliteVector db = new SqliteVector(DATABASE_FILE);
+            VectorService db = new VectorService(
+                Options.Create(new VectorServiceOptions()
+                {
+                    ConnectionString = DATABASE_FILE
+                }));
 
             Stopwatch watch = new Stopwatch();
             watch.Start();
@@ -353,6 +390,94 @@ namespace DaJet.RabbitMQ.Test
             watch.Stop();
 
             Console.WriteLine($"Found {counter} vectors in {watch.ElapsedMilliseconds} ms.");
+        }
+
+
+
+        [TestMethod] public void RabbitMQ_Produce()
+        {
+            string queue = "dajet-queue";
+            string uri = "amqp://guest:guest@localhost:5672/%2F";
+
+            List<OutgoingMessage> messages = GetTestMessages();
+
+            using (RmqMessageProducer producer = new RmqMessageProducer(uri, queue))
+            {
+                producer.Initialize(ExchangeRoles.Dispatcher);
+
+                foreach (OutgoingMessage message in messages)
+                {
+                    producer.Publish(message);
+                }
+            }
+
+            Console.WriteLine($"Produced {messages.Count} messages.");
+        }
+        [TestMethod] public void RabbitMQ_Consume()
+        {
+            string uri = "amqp://guest:guest@localhost:5672/%2F";
+
+            FileLogger.UseCatalog("C:\\temp");
+            FileLogger.UseFileName("rmq-test");
+
+            _options = Options.Create(new RmqConsumerOptions()
+            {
+                Heartbeat = 10,
+                UseVectorService = true,
+                VectorDatabase = "C:\\temp\\dajet-vector.db",
+                Queues = new List<string>() { "dajet-queue" }
+            });
+
+            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri))
+            {
+                consumer.Configure(_options);
+
+                consumer.Initialize(DatabaseProvider.SQLServer, MS_CONNECTION_STRING, INCOMING_QUEUE_NAME);
+
+                consumer.Consume(stop.Token, FileLogger.Log);
+            }
+        }
+        private List<OutgoingMessage> GetTestMessages()
+        {
+            OutgoingMessage message;
+            List<OutgoingMessage> messages = new List<OutgoingMessage>();
+
+            message = OutgoingMessageDataMapper.Create(10) as OutgoingMessage;
+            message.Uuid = Guid.Empty;
+            message.MessageNumber = 1;
+            message.Sender = "TEST";
+            message.Recipients = "TEST";
+            message.OperationType = "UPSERT";
+            message.DateTimeStamp = DateTime.Now;
+            message.MessageType = "Справочник.Тест";
+            message.MessageBody = "{ \"msgno\": \"1\" }";
+            messages.Add(message);
+
+            message = OutgoingMessageDataMapper.Create(10) as OutgoingMessage;
+            message.Uuid = Guid.Empty;
+            message.MessageNumber = 2;
+            message.Sender = "TEST";
+            message.Recipients = "TEST";
+            message.OperationType = "UPSERT";
+            message.DateTimeStamp = DateTime.Now;
+            message.MessageType = "Справочник.Тест";
+            message.MessageBody = "{ \"msgno\": \"2\" }";
+            messages.Add(message);
+
+            message = OutgoingMessageDataMapper.Create(10) as OutgoingMessage;
+            message.Uuid = Guid.Empty;
+            message.MessageNumber = 3;
+            message.Sender = "TEST";
+            message.Recipients = "TEST";
+            message.OperationType = "UPSERT";
+            message.DateTimeStamp = DateTime.Now;
+            message.MessageType = "Справочник.Тест";
+            message.MessageBody = "{ \"msgno\": \"3\" }";
+            messages.Add(message);
+
+            return messages;
         }
     }
 }
