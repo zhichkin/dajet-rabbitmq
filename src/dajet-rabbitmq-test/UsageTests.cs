@@ -18,7 +18,7 @@ namespace DaJet.RabbitMQ.Test
 {
     [TestClass] public class UsageTests
     {
-        private const string INCOMING_QUEUE_NAME = "–егистр—ведений.¬ход€ща€ќчередь10"; // "–егистр—ведений.“естова€¬ход€ща€ќчередь";
+        private const string INCOMING_QUEUE_NAME = "–егистр—ведений.¬ход€ща€ќчередь10";
         private const string OUTGOING_QUEUE_NAME = "–егистр—ведений.»сход€ща€ќчередь11";
         private const string MS_CONNECTION_STRING = "Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True";
         private const string PG_CONNECTION_STRING = "Host=localhost;Port=5432;Database=dajet-messaging-pg;Username=postgres;Password=postgres;";
@@ -399,10 +399,18 @@ namespace DaJet.RabbitMQ.Test
             string queue = "dajet-queue";
             string uri = "amqp://guest:guest@localhost:5672/%2F";
 
+            IOptions<RmqProducerOptions> options = Options.Create(new RmqProducerOptions()
+            {
+                UseVectorService = true,
+                VectorDatabase = "C:\\temp\\dajet-vector.db"
+            });
+
             List<OutgoingMessage> messages = GetTestMessages();
 
             using (RmqMessageProducer producer = new RmqMessageProducer(uri, queue))
             {
+                producer.Configure(options);
+
                 producer.Initialize(ExchangeRoles.Dispatcher);
 
                 foreach (OutgoingMessage message in messages)

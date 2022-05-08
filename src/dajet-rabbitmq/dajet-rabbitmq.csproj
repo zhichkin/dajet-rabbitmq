@@ -9,10 +9,10 @@
 Microsoft SQL Server and PostgreSQL are supported.</Description>
     <Copyright>Zhichkin © 2022</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReleaseNotes>Added vector service</PackageReleaseNotes>
+    <PackageReleaseNotes>Added RmqProducerOptions</PackageReleaseNotes>
     <PackageProjectUrl>https://github.com/zhichkin/dajet-rabbitmq</PackageProjectUrl>
     <RepositoryUrl>https://github.com/zhichkin/dajet-rabbitmq</RepositoryUrl>
-    <Version>1.2.1</Version>
+    <Version>1.2.2</Version>
     <PackageId>DaJet.RabbitMQ</PackageId>
     <Product>DaJet.RabbitMQ</Product>
   </PropertyGroup>

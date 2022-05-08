@@ -1,5 +1,9 @@
 ﻿using DaJet.Data.Messaging;
 using DaJet.Json;
+using DaJet.Logging;
+using DaJet.Metadata;
+using DaJet.Vector;
+using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using System;
@@ -8,6 +12,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
 using System.Web;
+using OptionsFactory = Microsoft.Extensions.Options.Options;
 using V1 = DaJet.Data.Messaging.V1;
 using V10 = DaJet.Data.Messaging.V10;
 using V11 = DaJet.Data.Messaging.V11;
@@ -40,6 +45,24 @@ namespace DaJet.RabbitMQ
         {
             ParseRmqUri(uri);
             RoutingKey = routingKey;
+        }
+
+        private IDaJetVectorService _vectorService;
+        public IOptions<RmqProducerOptions> Options { get; private set; }
+        public void Configure(IOptions<RmqProducerOptions> options)
+        {
+            Options = options;
+
+            if (Options.Value.UseVectorService && !string.IsNullOrWhiteSpace(Options.Value.VectorDatabase))
+            {
+                VectorServiceOptions settings = new VectorServiceOptions()
+                {
+                    ConnectionString = Options.Value.VectorDatabase
+                };
+                IOptions<VectorServiceOptions> vectorOptions = OptionsFactory.Create(settings);
+
+                _vectorService = new VectorService(vectorOptions);
+            }
         }
 
         #region "RABBITMQ CONNECTION SETUP"
@@ -215,7 +238,7 @@ namespace DaJet.RabbitMQ
             return messagesSent;
         }
 
-        public int Publish(IMessageConsumer consumer) // EntityJsonSerializer serializer
+        public int Publish(IMessageConsumer consumer)
         {
             int produced = 0;
 
@@ -232,7 +255,12 @@ namespace DaJet.RabbitMQ
 
                     ConfigureMessageProperties(in message, Properties);
 
-                    ReadOnlyMemory<byte> messageBody = GetMessageBody(in message); // in serializer
+                    if (Options.Value.UseVectorService)
+                    {
+                        ValidateVector(Properties);
+                    }
+
+                    ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
 
                     if (string.IsNullOrWhiteSpace(RoutingKey))
                     {
@@ -264,6 +292,11 @@ namespace DaJet.RabbitMQ
         public void Publish(OutgoingMessageDataMapper message)
         {
             ConfigureMessageProperties(in message, Properties);
+
+            if (Options.Value.UseVectorService)
+            {
+                ValidateVector(Properties);
+            }
 
             ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
 
@@ -569,6 +602,39 @@ namespace DaJet.RabbitMQ
                     _ = properties.Headers.TryAdd(header.Key, header.Value);
                 }
             }
+        }
+
+
+
+        private void ValidateVector(in IBasicProperties headers)
+        {
+            if (headers == null)
+            {
+                return;
+            }
+
+            try
+            {
+                TryValidateVector(headers);
+            }
+            catch (Exception error)
+            {
+                FileLogger.Log(ExceptionHelper.GetErrorText(error));
+            }
+        }
+        private void TryValidateVector(in IBasicProperties headers)
+        {
+            string node = headers.AppId;
+            string type = headers.Type;
+
+            if (!long.TryParse(headers.MessageId, out long vector) || vector <= 0L)
+            {
+                return;
+            }
+            if (string.IsNullOrEmpty(node)) { return; }
+            if (string.IsNullOrEmpty(type)) { return; }
+
+            _ = _vectorService?.ValidateVector(node, type, vector);
         }
     }
 }
