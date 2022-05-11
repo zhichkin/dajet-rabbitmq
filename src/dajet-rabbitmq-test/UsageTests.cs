@@ -221,180 +221,9 @@ namespace DaJet.RabbitMQ.Test
         }
 
 
+
         private const string DATABASE_FILE = "C:\\temp\\dajet-vector.db";
-        [TestMethod] public void SelectSqliteVector()
-        {
-            VectorService db = new VectorService(
-                Options.Create(new VectorServiceOptions()
-                {
-                    ConnectionString = DATABASE_FILE
-                }));
-            
-            long vector = db.SelectVector("ЦБ", "Справочник.Номенклатура");
-
-            Console.WriteLine($"Vector = {vector}");
-
-        }
-        [TestMethod] public void InsertSqliteVector()
-        {
-            VectorService db = new VectorService(
-                Options.Create(new VectorServiceOptions()
-                {
-                    ConnectionString = DATABASE_FILE
-                }));
-
-            long vector = db.SelectVector("ЦБ", "Справочник.Номенклатура");
-
-            if (vector > 0)
-            {
-                return;
-            }
-
-            if (db.InsertVector("ЦБ", "Справочник.Номенклатура", 123))
-            {
-                Console.WriteLine($"Vector inserted.");
-            }
-        }
-        [TestMethod] public void UpdateSqliteVector()
-        {
-            VectorService db = new VectorService(
-                Options.Create(new VectorServiceOptions()
-                {
-                    ConnectionString = DATABASE_FILE
-                }));
-
-            long vector = db.SelectVector("ЦБ", "Справочник.Номенклатура");
-
-            if (vector > 0)
-            {
-                if (db.UpdateVector("ЦБ", "Справочник.Номенклатура", ++vector))
-                {
-                    Console.WriteLine($"Vector updated.");
-                }
-            }
-        }
-        [TestMethod] public void DeleteSqliteVector()
-        {
-            VectorService db = new VectorService(
-                Options.Create(new VectorServiceOptions()
-                {
-                    ConnectionString = DATABASE_FILE
-                }));
-
-            if (db.DeleteVector("ЦБ", "Справочник.Номенклатура"))
-            {
-                Console.WriteLine($"Vector deleted.");
-            }
-        }
-
-        [TestMethod] public void InsertVectorCollision()
-        {
-            VectorService db = new VectorService(
-                Options.Create(new VectorServiceOptions()
-                {
-                    ConnectionString = DATABASE_FILE
-                }));
-
-            if (db.InsertCollision("0095", "Справочник.Валюты", 1234567L, 7654321L))
-            {
-                Console.WriteLine("Collision inserted.");
-            }
-        }
-        [TestMethod] public void SelectVectorCollision()
-        {
-            VectorService db = new VectorService(
-                Options.Create(new VectorServiceOptions()
-                {
-                    ConnectionString = DATABASE_FILE
-                }));
-
-            CollisionInfo collision = db.SelectCollision();
-            {
-                Console.WriteLine($"{collision.Timestamp:yyyy-MM-ddTHH:mm:ss} [{collision.Node}] {collision.Type} ({collision.OldVector}) ({collision.NewVector})");
-            }
-        }
-
-        [TestMethod] public void BulkInsertSqliteVector()
-        {
-            VectorService db = new VectorService(
-                Options.Create(new VectorServiceOptions()
-                {
-                    ConnectionString = DATABASE_FILE
-                }));
-
-            Stopwatch watch = new Stopwatch();
-            watch.Start();
-
-            int counter = 0;
-            
-            for (int i = 0; i < 10000; i++)
-            {
-                if (db.InsertVector("ЦБ", "Справочник." + (i + 1).ToString(), (i + 1)))
-                {
-                    counter++;
-                }
-            }
-
-            watch.Stop();
-
-            Console.WriteLine($"Inserted {counter} vectors in {watch.ElapsedMilliseconds} ms.");
-        }
-        [TestMethod] public void BulkUpdateSqliteVector()
-        {
-            VectorService db = new VectorService(
-                Options.Create(new VectorServiceOptions()
-                {
-                    ConnectionString = DATABASE_FILE
-                }));
-
-            Stopwatch watch = new Stopwatch();
-            watch.Start();
-
-            int counter = 0;
-
-            for (int i = 0; i < 10000; i++)
-            {
-                if (db.UpdateVector("ЦБ", "Справочник." + (i + 1).ToString(), (i + 100)))
-                {
-                    counter++;
-                }
-            }
-
-            watch.Stop();
-
-            Console.WriteLine($"Updated {counter} vectors in {watch.ElapsedMilliseconds} ms.");
-        }
-        [TestMethod] public void BulkSelectSqliteVector()
-        {
-            VectorService db = new VectorService(
-                Options.Create(new VectorServiceOptions()
-                {
-                    ConnectionString = DATABASE_FILE
-                }));
-
-            Stopwatch watch = new Stopwatch();
-            watch.Start();
-
-            int counter = 0;
-
-            for (int i = 0; i < 10000; i++)
-            {
-                long vector = db.SelectVector("ЦБ", "Справочник." + (i + 1).ToString());
-                
-                if (vector > 0)
-                {
-                    counter++;
-                }
-            }
-
-            watch.Stop();
-
-            Console.WriteLine($"Found {counter} vectors in {watch.ElapsedMilliseconds} ms.");
-        }
-
-
-
-        [TestMethod] public void RabbitMQ_Produce()
+       [TestMethod] public void RabbitMQ_Produce()
         {
             string queue = "dajet-queue";
             string uri = "amqp://guest:guest@localhost:5672/%2F";
@@ -402,7 +231,7 @@ namespace DaJet.RabbitMQ.Test
             IOptions<RmqProducerOptions> options = Options.Create(new RmqProducerOptions()
             {
                 UseVectorService = true,
-                VectorDatabase = "C:\\temp\\dajet-vector.db"
+                VectorDatabase = DATABASE_FILE
             });
 
             List<OutgoingMessage> messages = GetTestMessages();
@@ -432,7 +261,7 @@ namespace DaJet.RabbitMQ.Test
             {
                 Heartbeat = 10,
                 UseVectorService = true,
-                VectorDatabase = "C:\\temp\\dajet-vector.db",
+                VectorDatabase = DATABASE_FILE,
                 Queues = new List<string>() { "dajet-queue" }
             });
 
@@ -454,24 +283,24 @@ namespace DaJet.RabbitMQ.Test
 
             message = OutgoingMessageDataMapper.Create(10) as OutgoingMessage;
             message.Uuid = Guid.Empty;
-            message.MessageNumber = 1;
+            message.MessageNumber = 4;
             message.Sender = "TEST";
             message.Recipients = "TEST";
             message.OperationType = "UPSERT";
             message.DateTimeStamp = DateTime.Now;
             message.MessageType = "Справочник.Тест";
-            message.MessageBody = "{ \"msgno\": \"1\" }";
+            message.MessageBody = "{ \"#type\": \"jcfg:CatalogObject.Валюты\", \"#value\": { \"Ref\": \"26358362-D8DD-42D1-90A6-6D87C3ACA376\" } }";
             messages.Add(message);
 
             message = OutgoingMessageDataMapper.Create(10) as OutgoingMessage;
             message.Uuid = Guid.Empty;
-            message.MessageNumber = 2;
+            message.MessageNumber = 5;
             message.Sender = "TEST";
             message.Recipients = "TEST";
             message.OperationType = "UPSERT";
             message.DateTimeStamp = DateTime.Now;
             message.MessageType = "Справочник.Тест";
-            message.MessageBody = "{ \"msgno\": \"2\" }";
+            message.MessageBody = "{ \"#type\": \"jcfg:CatalogObject.Валюты\", \"#value\": { \"Ref\": \"26358362-D8DD-42D1-90A6-6D87C3ACA376\" } }";
             messages.Add(message);
 
             message = OutgoingMessageDataMapper.Create(10) as OutgoingMessage;
@@ -482,7 +311,7 @@ namespace DaJet.RabbitMQ.Test
             message.OperationType = "UPSERT";
             message.DateTimeStamp = DateTime.Now;
             message.MessageType = "Справочник.Тест";
-            message.MessageBody = "{ \"msgno\": \"3\" }";
+            message.MessageBody = "{ \"#type\": \"jcfg:CatalogObject.Валюты\", \"#value\": { \"Ref\": \"3A72FD12-2081-4729-BF5F-D435E580512C\" } }";
             messages.Add(message);
 
             return messages;

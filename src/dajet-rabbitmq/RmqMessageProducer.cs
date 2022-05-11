@@ -255,12 +255,12 @@ namespace DaJet.RabbitMQ
 
                     ConfigureMessageProperties(in message, Properties);
 
+                    ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
+
                     if (Options.Value.UseVectorService)
                     {
-                        ValidateVector(Properties);
+                        ValidateVector(Properties, messageBody);
                     }
-
-                    ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
 
                     if (string.IsNullOrWhiteSpace(RoutingKey))
                     {
@@ -293,12 +293,12 @@ namespace DaJet.RabbitMQ
         {
             ConfigureMessageProperties(in message, Properties);
 
+            ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
+
             if (Options.Value.UseVectorService)
             {
-                ValidateVector(Properties);
+                ValidateVector(Properties, messageBody);
             }
-
-            ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
 
             if (string.IsNullOrWhiteSpace(RoutingKey))
             {
@@ -606,7 +606,7 @@ namespace DaJet.RabbitMQ
 
 
 
-        private void ValidateVector(in IBasicProperties headers)
+        private void ValidateVector(in IBasicProperties headers, ReadOnlyMemory<byte> message)
         {
             if (headers == null)
             {
@@ -615,14 +615,14 @@ namespace DaJet.RabbitMQ
 
             try
             {
-                TryValidateVector(headers);
+                TryValidateVector(headers, message);
             }
             catch (Exception error)
             {
                 FileLogger.Log(ExceptionHelper.GetErrorText(error));
             }
         }
-        private void TryValidateVector(in IBasicProperties headers)
+        private void TryValidateVector(in IBasicProperties headers, ReadOnlyMemory<byte> message)
         {
             string node = headers.AppId;
             string type = headers.Type;
@@ -634,7 +634,11 @@ namespace DaJet.RabbitMQ
             if (string.IsNullOrEmpty(node)) { return; }
             if (string.IsNullOrEmpty(type)) { return; }
 
-            _ = _vectorService?.ValidateVector(node, type, vector);
+            string key = MessageJsonParser.GetReferenceValue(type, message);
+
+            if (key == null) { return; }
+
+            _ = _vectorService?.ValidateVector(node, type, key, vector);
         }
     }
 }

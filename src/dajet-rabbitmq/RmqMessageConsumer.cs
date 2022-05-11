@@ -566,15 +566,17 @@ namespace DaJet.RabbitMQ
 
             try
             {
-                TryValidateVector(args.BasicProperties);
+                TryValidateVector(in args);
             }
             catch (Exception error)
             {
                 _logger(ExceptionHelper.GetErrorText(error));
             }
         }
-        private void TryValidateVector(IBasicProperties headers)
+        private void TryValidateVector(in BasicDeliverEventArgs args)
         {
+            IBasicProperties headers = args.BasicProperties;
+
             string node = headers.AppId;
             string type = headers.Type;
 
@@ -585,7 +587,11 @@ namespace DaJet.RabbitMQ
             if (string.IsNullOrEmpty(node)) { return; }
             if (string.IsNullOrEmpty(type)) { return; }
 
-            _ = _vectorService?.ValidateVector(node, type, vector);
+            string key = MessageJsonParser.GetReferenceValue(type, args.Body);
+
+            if (key == null) { return; }
+
+            _ = _vectorService?.ValidateVector(node, type, key, vector);
         }
     }
 }

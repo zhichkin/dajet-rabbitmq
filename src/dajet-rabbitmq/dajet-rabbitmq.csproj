@@ -12,7 +12,7 @@ Microsoft SQL Server and PostgreSQL are supported.</Description>
     <PackageReleaseNotes>Added RmqProducerOptions</PackageReleaseNotes>
     <PackageProjectUrl>https://github.com/zhichkin/dajet-rabbitmq</PackageProjectUrl>
     <RepositoryUrl>https://github.com/zhichkin/dajet-rabbitmq</RepositoryUrl>
-    <Version>1.2.2</Version>
+    <Version>1.2.3</Version>
     <PackageId>DaJet.RabbitMQ</PackageId>
     <Product>DaJet.RabbitMQ</Product>
   </PropertyGroup>
@@ -21,7 +21,7 @@ Microsoft SQL Server and PostgreSQL are supported.</Description>
     <PackageReference Include="DaJet.Data.Mapping" Version="3.3.0" />
     <PackageReference Include="DaJet.Data.Messaging" Version="4.0.1" />
     <PackageReference Include="DaJet.Logging" Version="1.1.0" />
-    <PackageReference Include="DaJet.Vector" Version="1.0.0" />
+    <PackageReference Include="DaJet.Vector" Version="1.1.1" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="6.0.0" />
     <PackageReference Include="RabbitMQ.Client" Version="6.2.4" />
   </ItemGroup>
