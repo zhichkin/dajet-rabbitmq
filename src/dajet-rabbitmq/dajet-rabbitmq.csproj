@@ -9,17 +9,17 @@
 Microsoft SQL Server and PostgreSQL are supported.</Description>
     <Copyright>Zhichkin © 2022</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReleaseNotes>Added RmqProducerOptions</PackageReleaseNotes>
+    <PackageReleaseNotes>Updated DaJet.Data.Messaging to 4.0.2 version</PackageReleaseNotes>
     <PackageProjectUrl>https://github.com/zhichkin/dajet-rabbitmq</PackageProjectUrl>
     <RepositoryUrl>https://github.com/zhichkin/dajet-rabbitmq</RepositoryUrl>
-    <Version>1.2.3</Version>
+    <Version>1.2.4</Version>
     <PackageId>DaJet.RabbitMQ</PackageId>
     <Product>DaJet.RabbitMQ</Product>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="DaJet.Data.Mapping" Version="3.3.0" />
-    <PackageReference Include="DaJet.Data.Messaging" Version="4.0.1" />
+    <PackageReference Include="DaJet.Data.Messaging" Version="4.0.2" />
     <PackageReference Include="DaJet.Logging" Version="1.1.0" />
     <PackageReference Include="DaJet.Vector" Version="1.1.1" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="6.0.0" />
