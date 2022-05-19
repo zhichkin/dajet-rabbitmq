@@ -26,11 +26,9 @@ namespace DaJet.RabbitMQ
         private IModel Channel;
         private IBasicProperties Properties;
         private bool ConnectionIsBlocked = false;
-        
-        private bool IsNacked = false;
-        private ulong DeliveryTag = 0UL;
 
         private byte[] _buffer; // message body buffer
+        private PublishTracker _tracker; // publisher confirms tracker
         private ExchangeRoles _exchangeRole = ExchangeRoles.None;
 
         public string HostName { get; private set; } = "localhost";
@@ -164,6 +162,8 @@ namespace DaJet.RabbitMQ
             channel.ConfirmSelect();
             channel.BasicAcks += BasicAcksHandler;
             channel.BasicNacks += BasicNacksHandler;
+            channel.BasicReturn += BasicReturnHandler;
+            channel.ModelShutdown += ModelShutdownHandler;
             return channel;
         }
         private IBasicProperties CreateMessageProperties(IModel channel)
@@ -176,16 +176,19 @@ namespace DaJet.RabbitMQ
         }
         private void BasicAcksHandler(object sender, BasicAckEventArgs args)
         {
-            //if (!(sender is IModel channel)) return;
-
-            DeliveryTag = args.DeliveryTag;
+            _tracker?.SetAckStatus(args.DeliveryTag, args.Multiple);
         }
         private void BasicNacksHandler(object sender, BasicNackEventArgs args)
         {
-            if (args.DeliveryTag <= DeliveryTag)
-            {
-                IsNacked = true;
-            }
+            _tracker?.SetNackStatus(args.DeliveryTag, args.Multiple);
+        }
+        private void BasicReturnHandler(object sender, BasicReturnEventArgs args)
+        {
+            _tracker?.SetReturnedStatus($"Message return ({args.ReplyCode}): {args.ReplyText}");
+        }
+        private void ModelShutdownHandler(object sender, ShutdownEventArgs args)
+        {
+            _tracker?.SetShutdownStatus($"Channel shutdown ({args.ReplyCode}): {args.ReplyText}");
         }
         public void Dispose()
         {
@@ -204,6 +207,12 @@ namespace DaJet.RabbitMQ
             if (_buffer != null)
             {
                 ArrayPool<byte>.Shared.Return(_buffer);
+            }
+
+            if (_tracker != null)
+            {
+                _tracker.Clear();
+                _tracker = null;
             }
         }
 
@@ -238,6 +247,65 @@ namespace DaJet.RabbitMQ
             return messagesSent;
         }
 
+        #region "TEST METHODS"
+
+        public void Publish(OutgoingMessageDataMapper message)
+        {
+            ConfigureMessageProperties(in message, Properties);
+
+            ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
+
+            if (Options.Value.UseVectorService)
+            {
+                ValidateVector(Properties, messageBody);
+            }
+
+            if (_tracker == null)
+            {
+                _tracker = new PublishTracker(
+                    Options.Value.ErrorLogDatabase,
+                    Options.Value.ErrorLogRetention);
+            }
+            _tracker.Track(Channel.NextPublishSeqNo);
+
+            if (string.IsNullOrWhiteSpace(RoutingKey))
+            {
+                Channel.BasicPublish(ExchangeName, message.MessageType, true, Properties, messageBody);
+            }
+            else
+            {
+                Channel.BasicPublish(ExchangeName, RoutingKey, true, Properties, messageBody);
+            }
+
+            //if (!Channel.WaitForConfirms())
+            //{
+            //    throw new Exception("WaitForConfirms error");
+            //}
+
+            //if (tracker.HasErrors())
+            //{
+            //    throw new Exception(_tracker.ErrorReason);
+            //}
+        }
+        public void Confirm()
+        {
+            if (!Channel.WaitForConfirms())
+            {
+                throw new Exception("WaitForConfirms error");
+            }
+
+            if (_tracker.HasErrors())
+            {
+                _tracker.TryLogErrors();
+                throw new Exception(_tracker.ErrorReason);
+            }
+
+            _tracker.Clear();
+            _tracker = null;
+        }
+
+        #endregion
+
         public int Publish(IMessageConsumer consumer)
         {
             int produced = 0;
@@ -245,6 +313,10 @@ namespace DaJet.RabbitMQ
             do
             {
                 consumer.TxBegin();
+
+                _tracker = new PublishTracker(
+                    Options.Value.ErrorLogDatabase,
+                    Options.Value.ErrorLogRetention);
 
                 foreach (OutgoingMessageDataMapper message in consumer.Select())
                 {
@@ -262,13 +334,15 @@ namespace DaJet.RabbitMQ
                         ValidateVector(Properties, messageBody);
                     }
 
+                    _tracker.Track(Channel.NextPublishSeqNo);
+
                     if (string.IsNullOrWhiteSpace(RoutingKey))
                     {
-                        Channel.BasicPublish(ExchangeName, message.MessageType, Properties, messageBody);
+                        Channel.BasicPublish(ExchangeName, message.MessageType, true, Properties, messageBody);
                     }
                     else
                     {
-                        Channel.BasicPublish(ExchangeName, RoutingKey, Properties, messageBody);
+                        Channel.BasicPublish(ExchangeName, RoutingKey, true, Properties, messageBody);
                     }
                     
                     produced++;
@@ -282,39 +356,18 @@ namespace DaJet.RabbitMQ
                     }
                 }
 
+                if (_tracker.HasErrors())
+                {
+                    _tracker.TryLogErrors();
+                    throw new Exception(_tracker.ErrorReason);
+                }
+
                 consumer.TxCommit();
             }
             while (consumer.RecordsAffected > 0);
 
             return produced;
         }
-
-        public void Publish(OutgoingMessageDataMapper message)
-        {
-            ConfigureMessageProperties(in message, Properties);
-
-            ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
-
-            if (Options.Value.UseVectorService)
-            {
-                ValidateVector(Properties, messageBody);
-            }
-
-            if (string.IsNullOrWhiteSpace(RoutingKey))
-            {
-                Channel.BasicPublish(ExchangeName, message.MessageType, Properties, messageBody);
-            }
-            else
-            {
-                Channel.BasicPublish(ExchangeName, RoutingKey, Properties, messageBody);
-            }
-
-            if (!Channel.WaitForConfirms())
-            {
-                throw new Exception("WaitForConfirms error");
-            }
-        }
-
         private ReadOnlyMemory<byte> GetMessageBody(in OutgoingMessageDataMapper message) // in EntityJsonSerializer serializer
         {
             int bufferSize = message.MessageBody.Length * 2; // char == 2 bytes
@@ -332,28 +385,6 @@ namespace DaJet.RabbitMQ
             int encoded = Encoding.UTF8.GetBytes(message.MessageBody, 0, message.MessageBody.Length, _buffer, 0);
 
             ReadOnlyMemory<byte> messageBody = new ReadOnlyMemory<byte>(_buffer, 0, encoded);
-
-            //if (messageBody.IsEmpty)
-            //{
-            //    if (message is V11.OutgoingMessage message11)
-            //    {
-            //        messageBody = serializer.Serialize(message.MessageType, message11.Reference);
-
-            //        if (messageBody.IsEmpty)
-            //        {
-            //            messageBody = serializer.SerializeAsObjectDeletion(message.MessageType, message11.Reference);
-            //        }
-            //    }
-            //    else if (message is V12.OutgoingMessage message12)
-            //    {
-            //        messageBody = serializer.Serialize(message.MessageType, message12.Reference);
-
-            //        if (messageBody.IsEmpty)
-            //        {
-            //            messageBody = serializer.SerializeAsObjectDeletion(message.MessageType, message12.Reference);
-            //        }
-            //    }
-            //}
             
             return messageBody;
         }

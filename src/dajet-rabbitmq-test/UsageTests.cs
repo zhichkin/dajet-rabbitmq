@@ -223,15 +223,18 @@ namespace DaJet.RabbitMQ.Test
 
 
         private const string DATABASE_FILE = "C:\\temp\\dajet-vector.db";
-       [TestMethod] public void RabbitMQ_Produce()
+        private const string ERROR_LOG_FILE = "C:\\temp\\producer-errors.db";
+        [TestMethod] public void RabbitMQ_Produce()
         {
             string queue = "dajet-queue";
             string uri = "amqp://guest:guest@localhost:5672/%2F";
 
             IOptions<RmqProducerOptions> options = Options.Create(new RmqProducerOptions()
             {
-                UseVectorService = true,
-                VectorDatabase = DATABASE_FILE
+                UseVectorService = false,
+                VectorDatabase = DATABASE_FILE,
+                ErrorLogDatabase = ERROR_LOG_FILE,
+                ErrorLogRetention = 1 // one hour = 3600 seconds
             });
 
             List<OutgoingMessage> messages = GetTestMessages();
@@ -246,6 +249,8 @@ namespace DaJet.RabbitMQ.Test
                 {
                     producer.Publish(message);
                 }
+
+                producer.Confirm();
             }
 
             Console.WriteLine($"Produced {messages.Count} messages.");
@@ -279,40 +284,22 @@ namespace DaJet.RabbitMQ.Test
         private List<OutgoingMessage> GetTestMessages()
         {
             OutgoingMessage message;
+
             List<OutgoingMessage> messages = new List<OutgoingMessage>();
 
-            message = OutgoingMessageDataMapper.Create(10) as OutgoingMessage;
-            message.Uuid = Guid.Empty;
-            message.MessageNumber = 4;
-            message.Sender = "TEST";
-            message.Recipients = "TEST";
-            message.OperationType = "UPSERT";
-            message.DateTimeStamp = DateTime.Now;
-            message.MessageType = "Справочник.Тест";
-            message.MessageBody = "{ \"#type\": \"jcfg:CatalogObject.Валюты\", \"#value\": { \"Ref\": \"26358362-D8DD-42D1-90A6-6D87C3ACA376\" } }";
-            messages.Add(message);
-
-            message = OutgoingMessageDataMapper.Create(10) as OutgoingMessage;
-            message.Uuid = Guid.Empty;
-            message.MessageNumber = 5;
-            message.Sender = "TEST";
-            message.Recipients = "TEST";
-            message.OperationType = "UPSERT";
-            message.DateTimeStamp = DateTime.Now;
-            message.MessageType = "Справочник.Тест";
-            message.MessageBody = "{ \"#type\": \"jcfg:CatalogObject.Валюты\", \"#value\": { \"Ref\": \"26358362-D8DD-42D1-90A6-6D87C3ACA376\" } }";
-            messages.Add(message);
-
-            message = OutgoingMessageDataMapper.Create(10) as OutgoingMessage;
-            message.Uuid = Guid.Empty;
-            message.MessageNumber = 3;
-            message.Sender = "TEST";
-            message.Recipients = "TEST";
-            message.OperationType = "UPSERT";
-            message.DateTimeStamp = DateTime.Now;
-            message.MessageType = "Справочник.Тест";
-            message.MessageBody = "{ \"#type\": \"jcfg:CatalogObject.Валюты\", \"#value\": { \"Ref\": \"3A72FD12-2081-4729-BF5F-D435E580512C\" } }";
-            messages.Add(message);
+            for (int i = 0; i < 10; i++)
+            {
+                message = OutgoingMessageDataMapper.Create(10) as OutgoingMessage;
+                message.Uuid = Guid.Empty;
+                message.MessageNumber = (i + 1);
+                message.Sender = "TEST";
+                message.Recipients = "TEST";
+                message.OperationType = "UPSERT";
+                message.DateTimeStamp = DateTime.Now;
+                message.MessageType = "Справочник.Тест";
+                message.MessageBody = $"{{ \"value\": \"{(i + 1)}\", }}";
+                messages.Add(message);
+            }
 
             return messages;
         }

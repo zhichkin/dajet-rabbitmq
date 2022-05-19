@@ -4,5 +4,7 @@
     {
         public bool UseVectorService { get; set; } = false;
         public string VectorDatabase { get; set; } = string.Empty;
+        public string ErrorLogDatabase { get; set; } = string.Empty;
+        public int ErrorLogRetention { get; set; } = 24 * 7; // one week in hours
     }
 }
