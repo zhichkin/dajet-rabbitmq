@@ -318,7 +318,7 @@ namespace DaJet.RabbitMQ
                     Options.Value.ErrorLogDatabase,
                     Options.Value.ErrorLogRetention);
 
-                foreach (OutgoingMessageDataMapper message in consumer.Select())
+                foreach (OutgoingMessageDataMapper message in consumer.Select(Options.Value.MessagesPerTransaction))
                 {
                     if (ConnectionIsBlocked)
                     {
