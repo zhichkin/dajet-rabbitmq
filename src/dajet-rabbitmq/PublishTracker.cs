@@ -82,6 +82,8 @@ namespace DaJet.RabbitMQ
             Interlocked.Increment(ref _returned);
 
             _reason = reason;
+
+            TryLogError(reason);
         }
         internal void SetShutdownStatus(string reason)
         {
@@ -132,7 +134,7 @@ namespace DaJet.RabbitMQ
         }
         internal bool HasErrors()
         {
-            if (IsReturned || IsShutdown)
+            if (IsShutdown) // IsReturned
             {
                 return true;
             }
@@ -154,6 +156,20 @@ namespace DaJet.RabbitMQ
                 if (!string.IsNullOrWhiteSpace(ErrorReason))
                 {
                     InsertError(ErrorReason);
+                }
+            }
+            catch (Exception error)
+            {
+                FileLogger.Log($"[Publish Tracker] {ExceptionHelper.GetErrorText(error)}");
+            }
+        }
+        private void TryLogError(string errorText)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(errorText))
+                {
+                    InsertError(errorText);
                 }
             }
             catch (Exception error)

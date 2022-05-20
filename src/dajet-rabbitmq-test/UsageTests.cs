@@ -293,7 +293,7 @@ namespace DaJet.RabbitMQ.Test
                 message.Uuid = Guid.Empty;
                 message.MessageNumber = (i + 1);
                 message.Sender = "TEST";
-                message.Recipients = "ТЕСТ"; //"N001,N002,N003";
+                message.Recipients = "N001,N002,N003"; // "ТЕСТ";
                 message.OperationType = "UPSERT";
                 message.DateTimeStamp = DateTime.Now;
                 message.MessageType = "Справочник.Тест";

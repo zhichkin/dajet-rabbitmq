@@ -209,6 +209,8 @@ namespace DaJet.RabbitMQ
                 {
                     if (i == 10)
                     {
+                        cc += ",...";
+
                         break;
                     }
 
