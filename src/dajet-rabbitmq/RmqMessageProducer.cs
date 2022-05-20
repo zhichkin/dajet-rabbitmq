@@ -184,7 +184,54 @@ namespace DaJet.RabbitMQ
         }
         private void BasicReturnHandler(object sender, BasicReturnEventArgs args)
         {
-            _tracker?.SetReturnedStatus($"Message return ({args.ReplyCode}): {args.ReplyText}");
+            if (_tracker != null && _tracker.IsReturned)
+            {
+                return; // already marked as returned
+            }
+
+            string reason =
+                "Message return (" + args.ReplyCode.ToString() + "): " +
+                (string.IsNullOrWhiteSpace(args.ReplyText) ? "(empty)" : args.ReplyText) + ". " +
+                "Exchange: " + (string.IsNullOrWhiteSpace(args.Exchange) ? "(empty)" : args.Exchange) + ". " +
+                "RoutingKey: " + (string.IsNullOrWhiteSpace(args.RoutingKey) ? "(empty)" : args.RoutingKey) + ".";
+
+            if (args.BasicProperties != null &&
+                args.BasicProperties.Headers != null &&
+                args.BasicProperties.Headers.TryGetValue("CC", out object value) &&
+                value != null &&
+                value is List<object> recipients &&
+                recipients != null &&
+                recipients.Count > 0)
+            {
+                string cc = string.Empty;
+
+                for (int i = 0; i < recipients.Count; i++)
+                {
+                    if (i == 10)
+                    {
+                        break;
+                    }
+
+                    if (recipients[i] is byte[] recipient)
+                    {
+                        if (string.IsNullOrEmpty(cc))
+                        {
+                            cc = Encoding.UTF8.GetString(recipient);
+                        }
+                        else
+                        {
+                            cc += "," + Encoding.UTF8.GetString(recipient);
+                        }
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(cc))
+                {
+                    reason += " CC: " + cc;
+                }
+            }
+
+            _tracker?.SetReturnedStatus(reason);
         }
         private void ModelShutdownHandler(object sender, ShutdownEventArgs args)
         {

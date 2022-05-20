@@ -226,7 +226,7 @@ namespace DaJet.RabbitMQ.Test
         private const string ERROR_LOG_FILE = "C:\\temp\\producer-errors.db";
         [TestMethod] public void RabbitMQ_Produce()
         {
-            string queue = "dajet-queue";
+            string queue = "dajet-queue_not_found";
             string uri = "amqp://guest:guest@localhost:5672/%2F";
 
             IOptions<RmqProducerOptions> options = Options.Create(new RmqProducerOptions()
@@ -293,7 +293,7 @@ namespace DaJet.RabbitMQ.Test
                 message.Uuid = Guid.Empty;
                 message.MessageNumber = (i + 1);
                 message.Sender = "TEST";
-                message.Recipients = "TEST";
+                message.Recipients = "ТЕСТ"; //"N001,N002,N003";
                 message.OperationType = "UPSERT";
                 message.DateTimeStamp = DateTime.Now;
                 message.MessageType = "Справочник.Тест";

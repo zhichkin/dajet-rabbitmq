@@ -104,14 +104,14 @@ namespace DaJet.RabbitMQ
             }
         }
 
-        private bool IsReturned
+        internal bool IsReturned
         {
             get
             {
                 return (Interlocked.Read(ref _returned) > 0);
             }
         }
-        private bool IsShutdown
+        internal bool IsShutdown
         {
             get
             {

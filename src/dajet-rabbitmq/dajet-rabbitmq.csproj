@@ -9,10 +9,10 @@
 Microsoft SQL Server and PostgreSQL are supported.</Description>
     <Copyright>Zhichkin © 2022</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReleaseNotes>Added messages per transaction setting</PackageReleaseNotes>
+    <PackageReleaseNotes>Added more detailed basic.return logging</PackageReleaseNotes>
     <PackageProjectUrl>https://github.com/zhichkin/dajet-rabbitmq</PackageProjectUrl>
     <RepositoryUrl>https://github.com/zhichkin/dajet-rabbitmq</RepositoryUrl>
-    <Version>1.3.2</Version>
+    <Version>1.3.3</Version>
     <PackageId>DaJet.RabbitMQ</PackageId>
     <Product>DaJet.RabbitMQ</Product>
   </PropertyGroup>
