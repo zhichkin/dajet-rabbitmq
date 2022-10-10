@@ -81,6 +81,7 @@ namespace DaJet.RabbitMQ
         private CancellationToken _token;
         private int _consumed = 0;
 
+        private ConsumerLogger _consumerLogger;
         private IDaJetVectorService _vectorService;
 
         public IOptions<RmqConsumerOptions> Options { get; private set; }
@@ -95,8 +96,13 @@ namespace DaJet.RabbitMQ
                     ConnectionString = Options.Value.VectorDatabase
                 };
                 IOptions<VectorServiceOptions> vectorOptions = OptionsFactory.Create(settings);
-                
+
                 _vectorService = new VectorService(vectorOptions);
+            }
+
+            if (Options.Value.UseLog)
+            {
+                _consumerLogger = new ConsumerLogger(Options.Value.LogDatabase, Options.Value.LogRetention);
             }
         }
 
@@ -162,6 +168,11 @@ namespace DaJet.RabbitMQ
                     int consumed = Interlocked.Exchange(ref _consumed, 0);
 
                     _logger($"Consumed {consumed} messages.");
+
+                    if (Options.Value.UseLog)
+                    {
+                        _consumerLogger?.ClearLog();
+                    }
                 }
                 catch (Exception error)
                 {
@@ -213,7 +224,7 @@ namespace DaJet.RabbitMQ
                 Connection = CreateConnection();
             }
         }
-        
+
         private void InitializeOrResetConsumers()
         {
             UpdateConsumers();
@@ -239,7 +250,7 @@ namespace DaJet.RabbitMQ
             {
                 consumers.Add(item.Key);
             }
-            
+
             ListMergeHelper.Compare(consumers, settings, out List<string> delete, out List<string> insert);
 
             if (delete.Count == 0 && insert.Count == 0)
@@ -259,7 +270,7 @@ namespace DaJet.RabbitMQ
             foreach (string queueName in delete)
             {
                 DisposeConsumer(queueName);
-                
+
                 if (Consumers.TryRemove(queueName, out EventingBasicConsumer consumer))
                 {
                     _logger($"Queue {queueName} consumer is removed.");
@@ -361,6 +372,11 @@ namespace DaJet.RabbitMQ
         {
             if (!(sender is EventingBasicConsumer consumer)) return;
 
+            if (Options.Value.UseLog)
+            {
+                LogMessageDelivery(in args);
+            }
+
             bool success = true;
 
             try
@@ -377,7 +393,7 @@ namespace DaJet.RabbitMQ
                     }
 
                     consumer.Model.BasicAck(args.DeliveryTag, false);
-                    
+
                     Interlocked.Increment(ref _consumed);
                 }
             }
@@ -592,6 +608,44 @@ namespace DaJet.RabbitMQ
             if (key == null) { return; }
 
             _ = _vectorService?.ValidateVector(node, type, key, vector);
+        }
+
+        private void LogMessageDelivery(in BasicDeliverEventArgs args)
+        {
+            if (args == null || args.BasicProperties == null)
+            {
+                return;
+            }
+
+            try
+            {
+                TryLogMessageDelivery(in args);
+            }
+            catch (Exception error)
+            {
+                _logger(ExceptionHelper.GetErrorText(error));
+            }
+        }
+        private void TryLogMessageDelivery(in BasicDeliverEventArgs args)
+        {
+            IBasicProperties headers = args.BasicProperties;
+
+            string node = headers.AppId;
+            string type = headers.Type;
+
+            if (string.IsNullOrEmpty(type))
+            {
+                return;
+            }
+
+            string key = MessageJsonParser.GetReferenceValue(type, args.Body);
+
+            if (key == null)
+            {
+                return;
+            }
+
+            _consumerLogger?.Log(node, type, key);
         }
     }
 }

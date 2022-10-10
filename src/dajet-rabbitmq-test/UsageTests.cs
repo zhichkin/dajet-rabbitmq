@@ -226,7 +226,7 @@ namespace DaJet.RabbitMQ.Test
         private const string ERROR_LOG_FILE = "C:\\temp\\producer-errors.db";
         [TestMethod] public void RabbitMQ_Produce()
         {
-            string queue = "dajet-queue_not_found";
+            string queue = "dajet-queue"; // "dajet-queue_not_found"
             string uri = "amqp://guest:guest@localhost:5672/%2F";
 
             IOptions<RmqProducerOptions> options = Options.Create(new RmqProducerOptions()
@@ -265,7 +265,9 @@ namespace DaJet.RabbitMQ.Test
             _options = Options.Create(new RmqConsumerOptions()
             {
                 Heartbeat = 10,
-                UseVectorService = true,
+                UseLog = true,
+                LogRetention = 1,
+                UseVectorService = false,
                 VectorDatabase = DATABASE_FILE,
                 Queues = new List<string>() { "dajet-queue" }
             });
@@ -296,8 +298,8 @@ namespace DaJet.RabbitMQ.Test
                 message.Recipients = "N001,N002,N003"; // "ТЕСТ";
                 message.OperationType = "UPSERT";
                 message.DateTimeStamp = DateTime.Now;
-                message.MessageType = "Справочник.Тест";
-                message.MessageBody = $"{{ \"value\": \"{(i + 1)}\", }}";
+                message.MessageType = (i % 2 == 0) ? "Справочник.Тест" : "РегистрСведений.Тест";
+                message.MessageBody = $"{{ \"Ссылка\": \"{(i + 1)}\" }}";
                 messages.Add(message);
             }
 

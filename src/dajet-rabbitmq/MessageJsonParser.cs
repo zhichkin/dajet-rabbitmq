@@ -12,6 +12,7 @@ namespace DaJet.RabbitMQ
 
         private static readonly byte[] REF_PROPERTY = Encoding.UTF8.GetBytes("Ref");
         private static readonly byte[] VALUE_PROPERTY = Encoding.UTF8.GetBytes("#value");
+        private static readonly byte[] ССЫЛКА_PROPERTY = Encoding.UTF8.GetBytes("Ссылка");
 
         private static CultureInfo GetCulture()
         {
@@ -64,6 +65,13 @@ namespace DaJet.RabbitMQ
                             }
                         }
                     }
+                    else if (reader.ValueTextEquals(ССЫЛКА_PROPERTY))
+                    {
+                        if (reader.Read() && reader.TokenType == JsonTokenType.String)
+                        {
+                            return reader.GetString();
+                        }
+                    }    
                 }
             }
 
