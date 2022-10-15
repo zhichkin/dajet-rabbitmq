@@ -7,8 +7,10 @@ using DaJet.Metadata;
 using DaJet.Metadata.Model;
 using DaJet.Vector;
 using Microsoft.Extensions.Options;
+using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
@@ -20,7 +22,7 @@ namespace DaJet.RabbitMQ.Test
     {
         private const string INCOMING_QUEUE_NAME = "–егистр—ведений.¬ход€ща€ќчередь10";
         private const string OUTGOING_QUEUE_NAME = "–егистр—ведений.»сход€ща€ќчередь11";
-        private const string MS_CONNECTION_STRING = "Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True";
+        private const string MS_CONNECTION_STRING = "Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True;Encrypt=False;";
         private const string PG_CONNECTION_STRING = "Host=localhost;Port=5432;Database=dajet-messaging-pg;Username=postgres;Password=postgres;";
 
         [TestMethod] public void TestRmqMessageProducer()
@@ -304,6 +306,45 @@ namespace DaJet.RabbitMQ.Test
             }
 
             return messages;
+        }
+
+
+
+        [TestMethod] public void TestEventTracker()
+        {
+            if (!new MetadataService()
+                .UseConnectionString(MS_CONNECTION_STRING)
+                .UseDatabaseProvider(DatabaseProvider.SQLServer)
+                .TryOpenInfoBase(out InfoBase infoBase, out string error))
+            {
+                Console.WriteLine(error);
+                return;
+            }
+
+            ApplicationObject queue = infoBase.GetApplicationObjectByName(OUTGOING_QUEUE_NAME);
+            if (queue == null)
+            {
+                Console.WriteLine($"ќбъект метаданных \"{OUTGOING_QUEUE_NAME}\" не найден.");
+                return;
+            }
+
+            string uri = "amqp://guest:guest@localhost:5672/%2F";
+
+            IOptions<RmqProducerOptions> options = Options.Create(new RmqProducerOptions());
+
+            using (IMessageConsumer consumer = new MsMessageConsumer(MS_CONNECTION_STRING, in queue))
+            {
+                using (RmqMessageProducer producer = new RmqMessageProducer(uri, "dajet-queue"))
+                {
+                    producer.Configure(options);
+
+                    producer.Initialize(ExchangeRoles.Dispatcher);
+
+                    int published = producer.Publish(consumer);
+
+                    Console.WriteLine($"Produced {published} messages.");
+                }
+            }
         }
     }
 }

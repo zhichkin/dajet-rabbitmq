@@ -30,6 +30,7 @@ namespace DaJet.RabbitMQ
         private byte[] _buffer; // message body buffer
         private PublishTracker _tracker; // publisher confirms tracker
         private ExchangeRoles _exchangeRole = ExchangeRoles.None;
+        private readonly EventTracker _eventTracker = new EventTracker();
 
         public string HostName { get; private set; } = "localhost";
         public int HostPort { get; private set; } = 5672;
@@ -177,10 +178,12 @@ namespace DaJet.RabbitMQ
         private void BasicAcksHandler(object sender, BasicAckEventArgs args)
         {
             _tracker?.SetAckStatus(args.DeliveryTag, args.Multiple);
+            _eventTracker.SetAckStatus(args.DeliveryTag, args.Multiple);
         }
         private void BasicNacksHandler(object sender, BasicNackEventArgs args)
         {
             _tracker?.SetNackStatus(args.DeliveryTag, args.Multiple);
+            _eventTracker.SetNackStatus(args.DeliveryTag, args.Multiple);
         }
         private void BasicReturnHandler(object sender, BasicReturnEventArgs args)
         {
@@ -234,10 +237,13 @@ namespace DaJet.RabbitMQ
             }
 
             _tracker?.SetReturnedStatus(reason);
+            _eventTracker.SetReturnedStatus(reason);
         }
         private void ModelShutdownHandler(object sender, ShutdownEventArgs args)
         {
-            _tracker?.SetShutdownStatus($"Channel shutdown ({args.ReplyCode}): {args.ReplyText}");
+            string reason = $"Channel shutdown ({args.ReplyCode}): {args.ReplyText}";
+            _tracker?.SetShutdownStatus(reason);
+            _eventTracker.SetShutdownStatus(reason);
         }
         public void Dispose()
         {
@@ -263,6 +269,8 @@ namespace DaJet.RabbitMQ
                 _tracker.Clear();
                 _tracker = null;
             }
+
+            _eventTracker.Dispose();
         }
 
         #endregion
@@ -361,57 +369,73 @@ namespace DaJet.RabbitMQ
 
             do
             {
-                consumer.TxBegin();
-
-                _tracker = new PublishTracker(
-                    Options.Value.ErrorLogDatabase,
-                    Options.Value.ErrorLogRetention);
-
-                foreach (OutgoingMessageDataMapper message in consumer.Select(Options.Value.MessagesPerTransaction))
+                using (_eventTracker)
                 {
-                    if (ConnectionIsBlocked)
-                    {
-                        throw new Exception("Connection is blocked");
-                    }
-
-                    ConfigureMessageProperties(in message, Properties);
-
-                    ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
-
-                    if (Options.Value.UseVectorService)
-                    {
-                        ValidateVector(Properties, messageBody);
-                    }
-
-                    _tracker.Track(Channel.NextPublishSeqNo);
-
-                    if (string.IsNullOrWhiteSpace(RoutingKey))
-                    {
-                        Channel.BasicPublish(ExchangeName, message.MessageType, true, Properties, messageBody);
-                    }
-                    else
-                    {
-                        Channel.BasicPublish(ExchangeName, RoutingKey, true, Properties, messageBody);
-                    }
+                    consumer.TxBegin();
                     
-                    produced++;
-                }
-                
-                if (consumer.RecordsAffected > 0)
-                {
-                    if (!Channel.WaitForConfirms())
+                    //_tracker = new PublishTracker(
+                    //    Options.Value.ErrorLogDatabase,
+                    //    Options.Value.ErrorLogRetention);
+                    
+                    foreach (OutgoingMessageDataMapper message in consumer.Select(Options.Value.MessagesPerTransaction))
                     {
-                        throw new Exception("WaitForConfirms error");
+                        if (ConnectionIsBlocked)
+                        {
+                            throw new Exception("Connection is blocked");
+                        }
+
+                        ConfigureMessageProperties(in message, Properties);
+
+                        ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
+
+                        if (Options.Value.UseVectorService)
+                        {
+                            ValidateVector(Properties, messageBody);
+                        }
+
+                        //_tracker.Track(Channel.NextPublishSeqNo);
+
+                        TrackerEvent @event = new TrackerEvent()
+                        {
+                            DeliveryTag = Channel.NextPublishSeqNo,
+                            EventType = "DBOUT",
+                            EventData = PublishStatus.New.ToString(),
+                            Source = Properties.AppId,
+                            //Target = Properties.Headers,
+                            MessageId = (Properties.MessageId == null) ? string.Empty : Properties.MessageId,
+                            MessageType = message.MessageType,
+                            MessageBody = MessageJsonParser.GetReferenceValue(message.MessageType, messageBody)
+                        };
+                        _eventTracker.Track(@event);
+
+                        if (string.IsNullOrWhiteSpace(RoutingKey))
+                        {
+                            Channel.BasicPublish(ExchangeName, message.MessageType, true, Properties, messageBody);
+                        }
+                        else
+                        {
+                            Channel.BasicPublish(ExchangeName, RoutingKey, true, Properties, messageBody);
+                        }
+
+                        produced++;
                     }
-                }
 
-                if (_tracker.HasErrors())
-                {
-                    _tracker.TryLogErrors();
-                    throw new Exception(_tracker.ErrorReason);
-                }
+                    if (consumer.RecordsAffected > 0)
+                    {
+                        if (!Channel.WaitForConfirms())
+                        {
+                            throw new Exception("WaitForConfirms error");
+                        }
+                    }
 
-                consumer.TxCommit();
+                    //if (_tracker.HasErrors())
+                    //{
+                    //    _tracker.TryLogErrors();
+                    //    throw new Exception(_tracker.ErrorReason);
+                    //}
+
+                    consumer.TxCommit();
+                }
             }
             while (consumer.RecordsAffected > 0);
 
