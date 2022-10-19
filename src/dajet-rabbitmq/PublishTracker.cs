@@ -34,16 +34,16 @@ namespace DaJet.RabbitMQ
 
         internal PublishTracker(string errorDatabase, int retentionInHours)
         {
-            _logRetention = retentionInHours * 60L * 60L; // convert hours to seconds
+            //_logRetention = retentionInHours * 60L * 60L; // convert hours to seconds
 
-            _connectionString = new SqliteConnectionStringBuilder()
-            {
-                DataSource = errorDatabase,
-                Mode = SqliteOpenMode.ReadWriteCreate
-            }
-            .ToString();
+            //_connectionString = new SqliteConnectionStringBuilder()
+            //{
+            //    DataSource = errorDatabase,
+            //    Mode = SqliteOpenMode.ReadWriteCreate
+            //}
+            //.ToString();
 
-            InitializeErrorDatabase();
+            //InitializeErrorDatabase();
         }
 
         internal void Track(ulong deliveryTag)
@@ -149,6 +149,9 @@ namespace DaJet.RabbitMQ
 
             return false;
         }
+        
+
+
         internal void TryLogErrors()
         {
             try

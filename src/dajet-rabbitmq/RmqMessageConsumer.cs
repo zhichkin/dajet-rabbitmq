@@ -1,4 +1,5 @@
 ﻿using DaJet.Data.Messaging;
+using DaJet.Logging;
 using DaJet.Metadata;
 using DaJet.Metadata.Model;
 using DaJet.Vector;
@@ -13,11 +14,11 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
+using OptionsFactory = Microsoft.Extensions.Options.Options;
 using V1 = DaJet.Data.Messaging.V1;
 using V10 = DaJet.Data.Messaging.V10;
 using V11 = DaJet.Data.Messaging.V11;
 using V12 = DaJet.Data.Messaging.V12;
-using OptionsFactory = Microsoft.Extensions.Options.Options;
 
 namespace DaJet.RabbitMQ
 {
@@ -28,6 +29,7 @@ namespace DaJet.RabbitMQ
 
         private IConnection Connection;
         private readonly ConcurrentDictionary<string, EventingBasicConsumer> Consumers = new ConcurrentDictionary<string, EventingBasicConsumer>();
+        private readonly EventTracker _eventTracker = new EventTracker();
 
         public string HostName { get; private set; } = "localhost";
         public int HostPort { get; private set; } = 5672;
@@ -377,6 +379,8 @@ namespace DaJet.RabbitMQ
                 LogMessageDelivery(in args);
             }
 
+            TrackConsumeEvent(args.BasicProperties, args.Body);
+
             bool success = true;
 
             try
@@ -386,6 +390,8 @@ namespace DaJet.RabbitMQ
                     IncomingMessageDataMapper message = ProduceMessage(in args);
 
                     producer.Insert(in message);
+
+                    TrackInsertEvent(args.BasicProperties, args.Body);
 
                     if (Options.Value.UseVectorService)
                     {
@@ -646,6 +652,56 @@ namespace DaJet.RabbitMQ
             }
 
             _consumerLogger?.Log(node, type, key);
+        }
+
+        private void TrackConsumeEvent(in IBasicProperties headers, in ReadOnlyMemory<byte> message)
+        {
+            try
+            {
+                TryTrackConsumeEvent(in headers, message);
+            }
+            catch (Exception error)
+            {
+                FileLogger.Log(ExceptionHelper.GetErrorText(error));
+            }
+        }
+        private void TryTrackConsumeEvent(in IBasicProperties headers, in ReadOnlyMemory<byte> message)
+        {
+            TrackerEvent @event = new TrackerEvent()
+            {
+                EventType = "RMQDB_CONSUME",
+                Source = headers.AppId ?? string.Empty,
+                MessageId = headers.MessageId ?? string.Empty,
+                EventData = new MessageData()
+                {
+                    Target = Options.Value.NodeCode,
+                    Type = headers.Type ?? string.Empty,
+                    Body = MessageJsonParser.GetReferenceValue(headers.Type ?? string.Empty, message)
+                }
+            };
+            _eventTracker.RegisterEvent(@event);
+        }
+        private void TrackInsertEvent(in IBasicProperties headers, in ReadOnlyMemory<byte> message)
+        {
+            try
+            {
+                TryTrackInsertEvent(in headers, message);
+            }
+            catch (Exception error)
+            {
+                FileLogger.Log(ExceptionHelper.GetErrorText(error));
+            }
+        }
+        private void TryTrackInsertEvent(in IBasicProperties headers, in ReadOnlyMemory<byte> message)
+        {
+            TrackerEvent @event = new TrackerEvent()
+            {
+                EventType = "RMQDB_INSERT",
+                Source = headers.AppId ?? string.Empty,
+                MessageId = headers.MessageId ?? string.Empty,
+                EventData = null
+            };
+            _eventTracker.RegisterEvent(@event);
         }
     }
 }

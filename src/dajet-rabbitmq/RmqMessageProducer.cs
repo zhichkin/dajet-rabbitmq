@@ -237,13 +237,19 @@ namespace DaJet.RabbitMQ
             }
 
             _tracker?.SetReturnedStatus(reason);
-            _eventTracker.SetReturnedStatus(reason);
+
+            if (args.BasicProperties != null &&
+                args.BasicProperties.IsAppIdPresent() &&
+                args.BasicProperties.IsMessageIdPresent())
+            {
+                _eventTracker.SetReturnedStatus(args.BasicProperties.AppId, args.BasicProperties.MessageId, reason);
+            }
         }
         private void ModelShutdownHandler(object sender, ShutdownEventArgs args)
         {
             string reason = $"Channel shutdown ({args.ReplyCode}): {args.ReplyText}";
             _tracker?.SetShutdownStatus(reason);
-            _eventTracker.SetShutdownStatus(reason);
+            _eventTracker.SetShutdownStatus(args.ToString());
         }
         public void Dispose()
         {
@@ -372,11 +378,11 @@ namespace DaJet.RabbitMQ
                 using (_eventTracker)
                 {
                     consumer.TxBegin();
-                    
-                    //_tracker = new PublishTracker(
-                    //    Options.Value.ErrorLogDatabase,
-                    //    Options.Value.ErrorLogRetention);
-                    
+
+                    _tracker = new PublishTracker(
+                        Options.Value.ErrorLogDatabase,
+                        Options.Value.ErrorLogRetention);
+
                     foreach (OutgoingMessageDataMapper message in consumer.Select(Options.Value.MessagesPerTransaction))
                     {
                         if (ConnectionIsBlocked)
@@ -393,20 +399,11 @@ namespace DaJet.RabbitMQ
                             ValidateVector(Properties, messageBody);
                         }
 
-                        //_tracker.Track(Channel.NextPublishSeqNo);
+                        ulong deliveryTag = Channel.NextPublishSeqNo;
 
-                        TrackerEvent @event = new TrackerEvent()
-                        {
-                            DeliveryTag = Channel.NextPublishSeqNo,
-                            EventType = "DBOUT",
-                            EventData = PublishStatus.New.ToString(),
-                            Source = Properties.AppId,
-                            //Target = Properties.Headers,
-                            MessageId = (Properties.MessageId == null) ? string.Empty : Properties.MessageId,
-                            MessageType = message.MessageType,
-                            MessageBody = MessageJsonParser.GetReferenceValue(message.MessageType, messageBody)
-                        };
-                        _eventTracker.Track(@event);
+                        _tracker.Track(deliveryTag);
+
+                        TrackSelectEvent(deliveryTag, Properties, messageBody);
 
                         if (string.IsNullOrWhiteSpace(RoutingKey))
                         {
@@ -416,6 +413,8 @@ namespace DaJet.RabbitMQ
                         {
                             Channel.BasicPublish(ExchangeName, RoutingKey, true, Properties, messageBody);
                         }
+
+                        TrackPublishEvent(deliveryTag, Properties, messageBody);
 
                         produced++;
                     }
@@ -428,11 +427,11 @@ namespace DaJet.RabbitMQ
                         }
                     }
 
-                    //if (_tracker.HasErrors())
-                    //{
-                    //    _tracker.TryLogErrors();
-                    //    throw new Exception(_tracker.ErrorReason);
-                    //}
+                    if (_tracker.HasErrors())
+                    {
+                        //FIXME: _tracker.TryLogErrors(); ???
+                        throw new Exception(_tracker.ErrorReason);
+                    }
 
                     consumer.TxCommit();
                 }
@@ -743,6 +742,72 @@ namespace DaJet.RabbitMQ
             if (key == null) { return; }
 
             _ = _vectorService?.ValidateVector(node, type, key, vector);
+        }
+
+
+
+        private void TrackSelectEvent(ulong deliveryTag, in IBasicProperties headers, ReadOnlyMemory<byte> message)
+        {
+            try
+            {
+                TryTrackSelectEvent(deliveryTag, headers, message);
+            }
+            catch (Exception error)
+            {
+                FileLogger.Log(ExceptionHelper.GetErrorText(error));
+            }
+        }
+        private void TryTrackSelectEvent(ulong deliveryTag, in IBasicProperties headers, ReadOnlyMemory<byte> message)
+        {
+            string recipients = string.Empty;
+
+            foreach (var header in headers.Headers)
+            {
+                if (header.Key == "CC" && header.Value is string[] values && values != null)
+                {
+                    recipients = string.Join(",", values);
+                }
+            }
+
+            TrackerEvent @event = new TrackerEvent()
+            {
+                DeliveryTag = deliveryTag,
+                EventType = "DBRMQ_SELECT",
+                Source = headers.AppId ?? string.Empty,
+                MessageId = headers.MessageId ?? string.Empty,
+                EventData = new MessageData()
+                {
+                    Target = recipients,
+                    Type = headers.Type ?? string.Empty,
+                    Body = MessageJsonParser.GetReferenceValue(headers.Type ?? string.Empty, message)
+                }
+            };
+
+            _eventTracker.RegisterEvent(@event);
+        }
+        private void TrackPublishEvent(ulong deliveryTag, in IBasicProperties headers, ReadOnlyMemory<byte> message)
+        {
+            try
+            {
+                TryTrackPublishEvent(deliveryTag, headers, message);
+            }
+            catch (Exception error)
+            {
+                FileLogger.Log(ExceptionHelper.GetErrorText(error));
+            }
+        }
+        private void TryTrackPublishEvent(ulong deliveryTag, in IBasicProperties headers, ReadOnlyMemory<byte> message)
+        {
+            TrackerEvent @event = new TrackerEvent()
+            {
+                DeliveryTag = deliveryTag,
+                EventType = "DBRMQ_PUBLISH",
+                Source = headers.AppId ?? string.Empty,
+                MessageId = headers.MessageId ?? string.Empty,
+                EventData = null
+            };
+
+            _eventTracker.RegisterEvent(@event);
         }
     }
 }

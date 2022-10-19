@@ -266,6 +266,7 @@ namespace DaJet.RabbitMQ.Test
 
             _options = Options.Create(new RmqConsumerOptions()
             {
+                NodeCode = "N001",
                 Heartbeat = 10,
                 UseLog = true,
                 LogRetention = 1,
@@ -334,7 +335,7 @@ namespace DaJet.RabbitMQ.Test
 
             using (IMessageConsumer consumer = new MsMessageConsumer(MS_CONNECTION_STRING, in queue))
             {
-                using (RmqMessageProducer producer = new RmqMessageProducer(uri, "dajet-queue"))
+                using (RmqMessageProducer producer = new RmqMessageProducer(uri, "dajet-queue")) // dajet-queue-not-found
                 {
                     producer.Configure(options);
 
