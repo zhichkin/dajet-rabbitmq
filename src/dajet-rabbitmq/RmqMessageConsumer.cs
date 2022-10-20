@@ -669,12 +669,13 @@ namespace DaJet.RabbitMQ
         {
             TrackerEvent @event = new TrackerEvent()
             {
+                EventNode = Options.Value.Node,
                 EventType = "RMQDB_CONSUME",
                 Source = headers.AppId ?? string.Empty,
                 MessageId = headers.MessageId ?? string.Empty,
                 EventData = new MessageData()
                 {
-                    Target = Options.Value.NodeCode,
+                    Target = Options.Value.Node,
                     Type = headers.Type ?? string.Empty,
                     Body = MessageJsonParser.GetReferenceValue(headers.Type ?? string.Empty, message)
                 }
@@ -696,6 +697,7 @@ namespace DaJet.RabbitMQ
         {
             TrackerEvent @event = new TrackerEvent()
             {
+                EventNode = Options.Value.Node,
                 EventType = "RMQDB_INSERT",
                 Source = headers.AppId ?? string.Empty,
                 MessageId = headers.MessageId ?? string.Empty,

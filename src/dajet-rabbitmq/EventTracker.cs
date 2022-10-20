@@ -17,6 +17,7 @@ namespace DaJet.RabbitMQ
 
         private const string CREATE_TRACKER_TABLE_SCRIPT =
             "CREATE TABLE IF NOT EXISTS tracker_events (" +
+            "event_node TEXT NOT NULL, " +
             "event_time INTEGER NOT NULL, " +
             "event_type TEXT NOT NULL, " +
             "event_data TEXT NOT NULL, " +
@@ -26,15 +27,15 @@ namespace DaJet.RabbitMQ
 
         private const string INSERT_TRACKER_EVENT_SCRIPT =
             "INSERT INTO tracker_events (" +
-            "event_time, event_type, event_data, source, message_id) " +
+            "event_node, event_time, event_type, event_data, source, message_id) " +
             "VALUES (" +
-            "@event_time, @event_type, @event_data, @source, @message_id) " +
+            "@event_node, @event_time, @event_type, @event_data, @source, @message_id) " +
             "RETURNING rowid;";
 
         private const string SELECT_TRACKER_EVENT_SCRIPT =
             "WITH filter AS (SELECT rowid FROM tracker_events ORDER BY rowid ASC LIMIT 1000) " +
             "DELETE FROM tracker_events WHERE rowid IN filter " +
-            "RETURNING event_time, event_type, event_data, source, message_id;";
+            "RETURNING event_node, event_time, event_type, event_data, source, message_id;";
 
         #endregion
 
@@ -92,7 +93,7 @@ namespace DaJet.RabbitMQ
         
         private long GetUnixDateTimeNow()
         {
-            return (long)(DateTime.Now - UNIX_ZERO_TIME).TotalSeconds;
+            return (long)(DateTime.UtcNow - UNIX_ZERO_TIME).TotalSeconds;
         }
         private long GetUnixDateTime(DateTime dateTime)
         {
@@ -128,6 +129,7 @@ namespace DaJet.RabbitMQ
                 {
                     command.CommandText = INSERT_TRACKER_EVENT_SCRIPT;
 
+                    command.Parameters.AddWithValue("event_node", @event.EventNode);
                     command.Parameters.AddWithValue("event_time", GetUnixDateTime(@event.EventTime));
                     command.Parameters.AddWithValue("event_type", @event.EventType);
                     command.Parameters.AddWithValue("event_data", eventData);
@@ -165,11 +167,12 @@ namespace DaJet.RabbitMQ
                         {
                             while (reader.Read())
                             {
-                                @event.EventTime = GetDateTimeFromUnixTime(reader.GetInt64(0));
-                                @event.EventType = reader.GetString(1);
-                                @event.EventData = reader.GetString(2);
-                                @event.Source = reader.GetString(3);
-                                @event.MessageId = reader.GetString(4);
+                                @event.EventNode = reader.GetString(0);
+                                @event.EventTime = GetDateTimeFromUnixTime(reader.GetInt64(1));
+                                @event.EventType = reader.GetString(2);
+                                @event.EventData = reader.GetString(3);
+                                @event.Source = reader.GetString(4);
+                                @event.MessageId = reader.GetString(5);
 
                                 yield return @event;
                             }
@@ -223,6 +226,7 @@ namespace DaJet.RabbitMQ
             {
                 RowId = @event.RowId,
                 DeliveryTag = @event.DeliveryTag,
+                EventNode = @event.EventNode,
                 EventType = $"DBRMQ_{status.ToString().ToUpperInvariant()}",
                 Source = @event.Source,
                 MessageId = @event.MessageId,

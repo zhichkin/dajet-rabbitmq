@@ -266,7 +266,7 @@ namespace DaJet.RabbitMQ.Test
 
             _options = Options.Create(new RmqConsumerOptions()
             {
-                NodeCode = "N001",
+                Node = "N001",
                 Heartbeat = 10,
                 UseLog = true,
                 LogRetention = 1,
@@ -331,7 +331,10 @@ namespace DaJet.RabbitMQ.Test
 
             string uri = "amqp://guest:guest@localhost:5672/%2F";
 
-            IOptions<RmqProducerOptions> options = Options.Create(new RmqProducerOptions());
+            IOptions<RmqProducerOptions> options = Options.Create(new RmqProducerOptions()
+            {
+                Node = "MAIN"
+            });
 
             using (IMessageConsumer consumer = new MsMessageConsumer(MS_CONNECTION_STRING, in queue))
             {

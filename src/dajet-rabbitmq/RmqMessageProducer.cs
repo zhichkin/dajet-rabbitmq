@@ -772,6 +772,7 @@ namespace DaJet.RabbitMQ
             TrackerEvent @event = new TrackerEvent()
             {
                 DeliveryTag = deliveryTag,
+                EventNode = Options.Value.Node,
                 EventType = "DBRMQ_SELECT",
                 Source = headers.AppId ?? string.Empty,
                 MessageId = headers.MessageId ?? string.Empty,
@@ -801,6 +802,7 @@ namespace DaJet.RabbitMQ
             TrackerEvent @event = new TrackerEvent()
             {
                 DeliveryTag = deliveryTag,
+                EventNode = Options.Value.Node,
                 EventType = "DBRMQ_PUBLISH",
                 Source = headers.AppId ?? string.Empty,
                 MessageId = headers.MessageId ?? string.Empty,
