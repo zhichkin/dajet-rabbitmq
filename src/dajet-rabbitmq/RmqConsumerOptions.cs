@@ -12,5 +12,6 @@ namespace DaJet.RabbitMQ
         public string LogDatabase { get; set; } = "rmq-consumer.db";
         public int LogRetention { get; set; } = 24 * 7; // one week in hours
         public string Node { get; set; } = string.Empty;
+        public bool UseTracker { get; set; } = false;
     }
 }

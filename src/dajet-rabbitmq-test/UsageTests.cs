@@ -13,6 +13,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Reflection;
 using System.Threading;
 using System.Timers;
 
@@ -268,14 +269,15 @@ namespace DaJet.RabbitMQ.Test
             {
                 Node = "N001",
                 Heartbeat = 10,
-                UseLog = true,
+                UseLog = false,
+                UseTracker = true,
                 LogRetention = 1,
                 UseVectorService = false,
                 VectorDatabase = DATABASE_FILE,
                 Queues = new List<string>() { "dajet-queue" }
             });
 
-            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
             using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri))
             {
@@ -333,7 +335,8 @@ namespace DaJet.RabbitMQ.Test
 
             IOptions<RmqProducerOptions> options = Options.Create(new RmqProducerOptions()
             {
-                Node = "MAIN"
+                Node = "MAIN",
+                UseTracker = true
             });
 
             using (IMessageConsumer consumer = new MsMessageConsumer(MS_CONNECTION_STRING, in queue))
@@ -347,6 +350,31 @@ namespace DaJet.RabbitMQ.Test
                     int published = producer.Publish(consumer);
 
                     Console.WriteLine($"Produced {published} messages.");
+                }
+            }
+        }
+        [TestMethod] public void ReadTrackerEvents()
+        {
+            using (EventTracker tracker = new EventTracker())
+            {
+                int counter = 0;
+
+                foreach (TrackerEvent @event in tracker.SelectTrackerEvents())
+                {
+                    counter++;
+                    Console.WriteLine("***");
+                    Console.WriteLine();
+
+                    foreach (PropertyInfo property in typeof(TrackerEvent).GetProperties())
+                    {
+                        object value = property.GetValue(@event, null);
+                        Console.WriteLine($"{property.Name} = {value}");
+                    }
+
+                    //if (counter == 15)
+                    //{
+                    //    throw new Exception("test transactional Sqlite destructive read");
+                    //}
                 }
             }
         }

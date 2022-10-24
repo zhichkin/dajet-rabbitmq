@@ -178,12 +178,20 @@ namespace DaJet.RabbitMQ
         private void BasicAcksHandler(object sender, BasicAckEventArgs args)
         {
             _tracker?.SetAckStatus(args.DeliveryTag, args.Multiple);
-            _eventTracker.SetAckStatus(args.DeliveryTag, args.Multiple);
+
+            if (Options.Value.UseTracker)
+            {
+                _eventTracker.SetAckStatus(args.DeliveryTag, args.Multiple);
+            }
         }
         private void BasicNacksHandler(object sender, BasicNackEventArgs args)
         {
             _tracker?.SetNackStatus(args.DeliveryTag, args.Multiple);
-            _eventTracker.SetNackStatus(args.DeliveryTag, args.Multiple);
+
+            if (Options.Value.UseTracker)
+            {
+                _eventTracker.SetNackStatus(args.DeliveryTag, args.Multiple);
+            }
         }
         private void BasicReturnHandler(object sender, BasicReturnEventArgs args)
         {
@@ -238,7 +246,8 @@ namespace DaJet.RabbitMQ
 
             _tracker?.SetReturnedStatus(reason);
 
-            if (args.BasicProperties != null &&
+            if (Options.Value.UseTracker &&
+                args.BasicProperties != null &&
                 args.BasicProperties.IsAppIdPresent() &&
                 args.BasicProperties.IsMessageIdPresent())
             {
@@ -249,7 +258,11 @@ namespace DaJet.RabbitMQ
         {
             string reason = $"Channel shutdown ({args.ReplyCode}): {args.ReplyText}";
             _tracker?.SetShutdownStatus(reason);
-            _eventTracker.SetShutdownStatus(args.ToString());
+
+            if (Options.Value.UseTracker)
+            {
+                _eventTracker.SetShutdownStatus(args.ToString());
+            }
         }
         public void Dispose()
         {
@@ -403,7 +416,10 @@ namespace DaJet.RabbitMQ
 
                         _tracker.Track(deliveryTag);
 
-                        TrackSelectEvent(deliveryTag, Properties, messageBody);
+                        if (Options.Value.UseTracker)
+                        {
+                            TrackSelectEvent(deliveryTag, Properties, messageBody);
+                        }
 
                         if (string.IsNullOrWhiteSpace(RoutingKey))
                         {
@@ -414,7 +430,10 @@ namespace DaJet.RabbitMQ
                             Channel.BasicPublish(ExchangeName, RoutingKey, true, Properties, messageBody);
                         }
 
-                        TrackPublishEvent(deliveryTag, Properties, messageBody);
+                        if (Options.Value.UseTracker)
+                        {
+                            TrackPublishEvent(deliveryTag, Properties, messageBody);
+                        }
 
                         produced++;
                     }
@@ -737,9 +756,9 @@ namespace DaJet.RabbitMQ
             if (string.IsNullOrEmpty(node)) { return; }
             if (string.IsNullOrEmpty(type)) { return; }
 
-            string key = MessageJsonParser.GetReferenceValue(type, message);
+            string key = MessageJsonParser.ExtractEntityKey(type, message);
 
-            if (key == null) { return; }
+            if (string.IsNullOrEmpty(key)) { return; }
 
             _ = _vectorService?.ValidateVector(node, type, key, vector);
         }
@@ -780,7 +799,7 @@ namespace DaJet.RabbitMQ
                 {
                     Target = recipients,
                     Type = headers.Type ?? string.Empty,
-                    Body = MessageJsonParser.GetReferenceValue(headers.Type ?? string.Empty, message)
+                    Body = MessageJsonParser.ExtractEntityKey(headers.Type ?? string.Empty, message)
                 }
             };
 

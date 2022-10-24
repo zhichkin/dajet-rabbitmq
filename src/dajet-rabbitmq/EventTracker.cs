@@ -11,7 +11,7 @@ using System.Text.Unicode;
 
 namespace DaJet.RabbitMQ
 {
-    internal sealed class EventTracker : IDisposable
+    public sealed class EventTracker : IDisposable
     {
         #region "EVENT TRACKER DATABASE SCHEMA"
 
@@ -48,7 +48,7 @@ namespace DaJet.RabbitMQ
         };
 
         private string _connectionString;
-        internal EventTracker()
+        public EventTracker()
         {
             Configure();
         }
@@ -104,7 +104,7 @@ namespace DaJet.RabbitMQ
             return UNIX_ZERO_TIME.AddSeconds(seconds);
         }
 
-        internal void RegisterEvent(TrackerEvent @event)
+        public void RegisterEvent(TrackerEvent @event)
         {
 
             string eventData = string.Empty;
@@ -149,7 +149,7 @@ namespace DaJet.RabbitMQ
                 _ = _tags.TryAdd(@event.DeliveryTag, @event);
             }
         }
-        internal IEnumerable<TrackerEvent> SelectTrackerEvents()
+        public IEnumerable<TrackerEvent> SelectTrackerEvents()
         {
             TrackerEvent @event = new TrackerEvent();
 

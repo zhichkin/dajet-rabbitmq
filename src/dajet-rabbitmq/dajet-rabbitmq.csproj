@@ -9,10 +9,10 @@
 Microsoft SQL Server and PostgreSQL are supported.</Description>
     <Copyright>Zhichkin © 2022</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReleaseNotes>Minor changes</PackageReleaseNotes>
+    <PackageReleaseNotes>New feature: message delivery tracking</PackageReleaseNotes>
     <PackageProjectUrl>https://github.com/zhichkin/dajet-rabbitmq</PackageProjectUrl>
     <RepositoryUrl>https://github.com/zhichkin/dajet-rabbitmq</RepositoryUrl>
-    <Version>1.4.1</Version>
+    <Version>1.5.0</Version>
     <PackageId>DaJet.RabbitMQ</PackageId>
     <Product>DaJet.RabbitMQ</Product>
   </PropertyGroup>

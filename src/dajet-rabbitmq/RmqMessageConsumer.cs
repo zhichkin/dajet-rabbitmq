@@ -379,7 +379,10 @@ namespace DaJet.RabbitMQ
                 LogMessageDelivery(in args);
             }
 
-            TrackConsumeEvent(args.BasicProperties, args.Body);
+            if (Options.Value.UseTracker)
+            {
+                TrackConsumeEvent(args.BasicProperties, args.Body);
+            }
 
             bool success = true;
 
@@ -391,7 +394,10 @@ namespace DaJet.RabbitMQ
 
                     producer.Insert(in message);
 
-                    TrackInsertEvent(args.BasicProperties, args.Body);
+                    if (Options.Value.UseTracker)
+                    {
+                        TrackInsertEvent(args.BasicProperties, args.Body);
+                    }
 
                     if (Options.Value.UseVectorService)
                     {
@@ -609,9 +615,9 @@ namespace DaJet.RabbitMQ
             if (string.IsNullOrEmpty(node)) { return; }
             if (string.IsNullOrEmpty(type)) { return; }
 
-            string key = MessageJsonParser.GetReferenceValue(type, args.Body);
+            string key = MessageJsonParser.ExtractEntityKey(type, args.Body);
 
-            if (key == null) { return; }
+            if (string.IsNullOrEmpty(key)) { return; }
 
             _ = _vectorService?.ValidateVector(node, type, key, vector);
         }
@@ -644,9 +650,9 @@ namespace DaJet.RabbitMQ
                 return;
             }
 
-            string key = MessageJsonParser.GetReferenceValue(type, args.Body);
+            string key = MessageJsonParser.ExtractEntityKey(type, args.Body);
 
-            if (key == null)
+            if (string.IsNullOrEmpty(key))
             {
                 return;
             }
@@ -677,7 +683,7 @@ namespace DaJet.RabbitMQ
                 {
                     Target = Options.Value.Node,
                     Type = headers.Type ?? string.Empty,
-                    Body = MessageJsonParser.GetReferenceValue(headers.Type ?? string.Empty, message)
+                    Body = MessageJsonParser.ExtractEntityKey(headers.Type ?? string.Empty, message)
                 }
             };
             _eventTracker.RegisterEvent(@event);
