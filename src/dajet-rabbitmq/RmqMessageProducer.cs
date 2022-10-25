@@ -179,7 +179,7 @@ namespace DaJet.RabbitMQ
         {
             _tracker?.SetAckStatus(args.DeliveryTag, args.Multiple);
 
-            if (Options.Value.UseTracker)
+            if (Options.Value.UseDeliveryTracking)
             {
                 _eventTracker.SetAckStatus(args.DeliveryTag, args.Multiple);
             }
@@ -188,7 +188,7 @@ namespace DaJet.RabbitMQ
         {
             _tracker?.SetNackStatus(args.DeliveryTag, args.Multiple);
 
-            if (Options.Value.UseTracker)
+            if (Options.Value.UseDeliveryTracking)
             {
                 _eventTracker.SetNackStatus(args.DeliveryTag, args.Multiple);
             }
@@ -246,7 +246,7 @@ namespace DaJet.RabbitMQ
 
             _tracker?.SetReturnedStatus(reason);
 
-            if (Options.Value.UseTracker &&
+            if (Options.Value.UseDeliveryTracking &&
                 args.BasicProperties != null &&
                 args.BasicProperties.IsAppIdPresent() &&
                 args.BasicProperties.IsMessageIdPresent())
@@ -259,7 +259,7 @@ namespace DaJet.RabbitMQ
             string reason = $"Channel shutdown ({args.ReplyCode}): {args.ReplyText}";
             _tracker?.SetShutdownStatus(reason);
 
-            if (Options.Value.UseTracker)
+            if (Options.Value.UseDeliveryTracking)
             {
                 _eventTracker.SetShutdownStatus(args.ToString());
             }
@@ -338,9 +338,7 @@ namespace DaJet.RabbitMQ
 
             if (_tracker == null)
             {
-                _tracker = new PublishTracker(
-                    Options.Value.ErrorLogDatabase,
-                    Options.Value.ErrorLogRetention);
+                _tracker = new PublishTracker();
             }
             _tracker.Track(Channel.NextPublishSeqNo);
 
@@ -372,7 +370,6 @@ namespace DaJet.RabbitMQ
 
             if (_tracker.HasErrors())
             {
-                _tracker.TryLogErrors();
                 throw new Exception(_tracker.ErrorReason);
             }
 
@@ -392,9 +389,7 @@ namespace DaJet.RabbitMQ
                 {
                     consumer.TxBegin();
 
-                    _tracker = new PublishTracker(
-                        Options.Value.ErrorLogDatabase,
-                        Options.Value.ErrorLogRetention);
+                    _tracker = new PublishTracker();
 
                     foreach (OutgoingMessageDataMapper message in consumer.Select(Options.Value.MessagesPerTransaction))
                     {
@@ -416,7 +411,7 @@ namespace DaJet.RabbitMQ
 
                         _tracker.Track(deliveryTag);
 
-                        if (Options.Value.UseTracker)
+                        if (Options.Value.UseDeliveryTracking)
                         {
                             TrackSelectEvent(deliveryTag, Properties, messageBody);
                         }
@@ -430,7 +425,7 @@ namespace DaJet.RabbitMQ
                             Channel.BasicPublish(ExchangeName, RoutingKey, true, Properties, messageBody);
                         }
 
-                        if (Options.Value.UseTracker)
+                        if (Options.Value.UseDeliveryTracking)
                         {
                             TrackPublishEvent(deliveryTag, Properties, messageBody);
                         }
@@ -448,7 +443,6 @@ namespace DaJet.RabbitMQ
 
                     if (_tracker.HasErrors())
                     {
-                        //FIXME: _tracker.TryLogErrors(); ???
                         throw new Exception(_tracker.ErrorReason);
                     }
 
@@ -479,7 +473,37 @@ namespace DaJet.RabbitMQ
             
             return messageBody;
         }
-        
+
+        private string GetHeaderVector(in IBasicProperties headers)
+        {
+            if (headers != null && headers.Headers != null)
+            {
+                if (headers.Headers.TryGetValue("vector", out object value))
+                {
+                    if (value is string vector1)
+                    {
+                        return vector1;
+                    }
+                    else if (value is byte[] vector2)
+                    {
+                        return Encoding.UTF8.GetString(vector2);
+                    }
+                }
+            }
+            return string.Empty;
+        }
+        private void SetVectorHeader(long vector, IBasicProperties properties)
+        {
+            if (properties.Headers == null)
+            {
+                properties.Headers = new Dictionary<string, object>();
+            }
+
+            if (!properties.Headers.TryAdd("vector", vector.ToString()))
+            {
+                properties.Headers["vector"] = vector.ToString();
+            }
+        }
         private void ConfigureMessageProperties(in OutgoingMessageDataMapper message, IBasicProperties properties)
         {
             if (message is V1.OutgoingMessage message1)
@@ -504,7 +528,7 @@ namespace DaJet.RabbitMQ
         {
             properties.AppId = message.Sender;
             properties.Type = message.MessageType;
-            properties.MessageId = message.MessageNumber.ToString();
+            properties.MessageId = message.Uuid.ToString();
 
             if (properties.Headers == null)
             {
@@ -514,6 +538,8 @@ namespace DaJet.RabbitMQ
             {
                 properties.Headers.Clear();
             }
+
+            SetVectorHeader(message.MessageNumber, properties);
 
             SetOperationTypeHeader(message, properties);
 
@@ -557,7 +583,7 @@ namespace DaJet.RabbitMQ
         {
             properties.AppId = message.Sender;
             properties.Type = message.MessageType;
-            properties.MessageId = message.MessageNumber.ToString();
+            properties.MessageId = message.Uuid.ToString();
 
             if (properties.Headers == null)
             {
@@ -567,6 +593,8 @@ namespace DaJet.RabbitMQ
             {
                 properties.Headers.Clear();
             }
+
+            SetVectorHeader(message.MessageNumber, properties);
 
             SetOperationTypeHeader(message, properties);
 
@@ -626,7 +654,7 @@ namespace DaJet.RabbitMQ
         {
             properties.AppId = message.Sender;
             properties.Type = message.MessageType;
-            properties.MessageId = message.MessageNumber.ToString();
+            properties.MessageId = message.Uuid.ToString();
 
             if (properties.Headers == null)
             {
@@ -636,6 +664,8 @@ namespace DaJet.RabbitMQ
             {
                 properties.Headers.Clear();
             }
+
+            SetVectorHeader(message.MessageNumber, properties);
 
             if (_exchangeRole == ExchangeRoles.Aggregator)
             {
@@ -678,7 +708,7 @@ namespace DaJet.RabbitMQ
         private void ConfigureMessageProperties(in V1.OutgoingMessage message, IBasicProperties properties)
         {
             properties.Type = message.MessageType;
-            properties.MessageId = message.MessageNumber.ToString();
+            properties.MessageId = message.Uuid.ToString();
 
             if (!string.IsNullOrWhiteSpace(message.Headers))
             {
@@ -692,6 +722,8 @@ namespace DaJet.RabbitMQ
                     throw new FormatException($"Message headers format exception. Message number: {{{message.MessageNumber}}}. Error message: {error.Message}");
                 }
             }
+
+            SetVectorHeader(message.MessageNumber, properties);
         }
         private void ConfigureMessageHeaders(in Dictionary<string, string> headers, IBasicProperties properties)
         {
@@ -746,18 +778,21 @@ namespace DaJet.RabbitMQ
         }
         private void TryValidateVector(in IBasicProperties headers, ReadOnlyMemory<byte> message)
         {
-            string node = headers.AppId;
-            string type = headers.Type;
+            string value = GetHeaderVector(in headers);
+            if (string.IsNullOrEmpty(value)) { return; }
 
-            if (!long.TryParse(headers.MessageId, out long vector) || vector <= 0L)
+            if (!long.TryParse(value, out long vector) || vector <= 0L)
             {
                 return;
             }
+
+            string node = headers.AppId;
             if (string.IsNullOrEmpty(node)) { return; }
+
+            string type = headers.Type;
             if (string.IsNullOrEmpty(type)) { return; }
 
             string key = MessageJsonParser.ExtractEntityKey(type, message);
-
             if (string.IsNullOrEmpty(key)) { return; }
 
             _ = _vectorService?.ValidateVector(node, type, key, vector);
@@ -791,18 +826,18 @@ namespace DaJet.RabbitMQ
             TrackerEvent @event = new TrackerEvent()
             {
                 DeliveryTag = deliveryTag,
-                EventNode = Options.Value.Node,
-                EventType = "DBRMQ_SELECT",
                 Source = headers.AppId ?? string.Empty,
-                MessageId = headers.MessageId ?? string.Empty,
+                MsgUid = headers.MessageId ?? string.Empty,
+                EventNode = Options.Value.ThisNode,
+                EventType = TrackerEventType.DBRMQ_SELECT,
                 EventData = new MessageData()
                 {
                     Target = recipients,
                     Type = headers.Type ?? string.Empty,
-                    Body = MessageJsonParser.ExtractEntityKey(headers.Type ?? string.Empty, message)
+                    Body = MessageJsonParser.ExtractEntityKey(headers.Type ?? string.Empty, message),
+                    Vector = GetHeaderVector(in headers)
                 }
             };
-
             _eventTracker.RegisterEvent(@event);
         }
         private void TrackPublishEvent(ulong deliveryTag, in IBasicProperties headers, ReadOnlyMemory<byte> message)
@@ -821,13 +856,11 @@ namespace DaJet.RabbitMQ
             TrackerEvent @event = new TrackerEvent()
             {
                 DeliveryTag = deliveryTag,
-                EventNode = Options.Value.Node,
-                EventType = "DBRMQ_PUBLISH",
                 Source = headers.AppId ?? string.Empty,
-                MessageId = headers.MessageId ?? string.Empty,
-                EventData = null
+                MsgUid = headers.MessageId ?? string.Empty,
+                EventNode = Options.Value.ThisNode,
+                EventType = TrackerEventType.DBRMQ_PUBLISH
             };
-
             _eventTracker.RegisterEvent(@event);
         }
     }

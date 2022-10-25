@@ -5,12 +5,9 @@ using DaJet.Json;
 using DaJet.Logging;
 using DaJet.Metadata;
 using DaJet.Metadata.Model;
-using DaJet.Vector;
 using Microsoft.Extensions.Options;
-using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
@@ -267,13 +264,9 @@ namespace DaJet.RabbitMQ.Test
 
             _options = Options.Create(new RmqConsumerOptions()
             {
-                Node = "N001",
+                ThisNode = "N001",
                 Heartbeat = 10,
-                UseLog = false,
-                UseTracker = true,
-                LogRetention = 1,
-                UseVectorService = false,
-                VectorDatabase = DATABASE_FILE,
+                UseDeliveryTracking = true,
                 Queues = new List<string>() { "dajet-queue" }
             });
 
@@ -335,8 +328,8 @@ namespace DaJet.RabbitMQ.Test
 
             IOptions<RmqProducerOptions> options = Options.Create(new RmqProducerOptions()
             {
-                Node = "MAIN",
-                UseTracker = true
+                ThisNode = "MAIN",
+                UseDeliveryTracking = true
             });
 
             using (IMessageConsumer consumer = new MsMessageConsumer(MS_CONNECTION_STRING, in queue))

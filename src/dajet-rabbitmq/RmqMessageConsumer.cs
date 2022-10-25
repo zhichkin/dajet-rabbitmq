@@ -379,7 +379,7 @@ namespace DaJet.RabbitMQ
                 LogMessageDelivery(in args);
             }
 
-            if (Options.Value.UseTracker)
+            if (Options.Value.UseDeliveryTracking)
             {
                 TrackConsumeEvent(args.BasicProperties, args.Body);
             }
@@ -394,7 +394,7 @@ namespace DaJet.RabbitMQ
 
                     producer.Insert(in message);
 
-                    if (Options.Value.UseTracker)
+                    if (Options.Value.UseDeliveryTracking)
                     {
                         TrackInsertEvent(args.BasicProperties, args.Body);
                     }
@@ -488,9 +488,17 @@ namespace DaJet.RabbitMQ
         {
             V10.IncomingMessage message = IncomingMessageDataMapper.Create(_version) as V10.IncomingMessage;
 
-            message.Uuid = Guid.NewGuid();
-            message.DateTimeStamp = DateTime.Now.AddYears(_yearOffset);
+            Guid messageUid = Guid.Empty;
+
+            if (!string.IsNullOrEmpty(args.BasicProperties.MessageId) &&
+                !Guid.TryParse(args.BasicProperties.MessageId, out messageUid))
+            {
+                messageUid = Guid.NewGuid();
+            }
+
+            message.Uuid = messageUid;
             message.MessageNumber = DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
+            message.DateTimeStamp = DateTime.Now.AddYears(_yearOffset);
             message.ErrorCount = 0;
             message.ErrorDescription = String.Empty;
             message.Sender = (args.BasicProperties.AppId ?? string.Empty);
@@ -514,9 +522,17 @@ namespace DaJet.RabbitMQ
         {
             V11.IncomingMessage message = IncomingMessageDataMapper.Create(_version) as V11.IncomingMessage;
 
-            message.Uuid = Guid.NewGuid();
-            message.DateTimeStamp = DateTime.Now.AddYears(_yearOffset);
+            Guid messageUid = Guid.Empty;
+
+            if (!string.IsNullOrEmpty(args.BasicProperties.MessageId) &&
+                !Guid.TryParse(args.BasicProperties.MessageId, out messageUid))
+            {
+                messageUid = Guid.NewGuid();
+            }
+
+            message.Uuid = messageUid;
             message.MessageNumber = DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
+            message.DateTimeStamp = DateTime.Now.AddYears(_yearOffset);
             message.ErrorCount = 0;
             message.ErrorDescription = String.Empty;
             message.Headers = GetMessageHeaders(in args);
@@ -541,9 +557,17 @@ namespace DaJet.RabbitMQ
         {
             V12.IncomingMessage message = IncomingMessageDataMapper.Create(_version) as V12.IncomingMessage;
 
-            message.Uuid = Guid.NewGuid();
-            message.DateTimeStamp = DateTime.Now.AddYears(_yearOffset);
+            Guid messageUid = Guid.Empty;
+
+            if (!string.IsNullOrEmpty(args.BasicProperties.MessageId) &&
+                !Guid.TryParse(args.BasicProperties.MessageId, out messageUid))
+            {
+                messageUid = Guid.NewGuid();
+            }
+
+            message.Uuid = messageUid;
             message.MessageNumber = DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
+            message.DateTimeStamp = DateTime.Now.AddYears(_yearOffset);
             message.ErrorCount = 0;
             message.ErrorDescription = String.Empty;
             message.Headers = GetMessageHeaders(in args);
@@ -584,6 +608,24 @@ namespace DaJet.RabbitMQ
 
             return JsonSerializer.Serialize(headers);
         }
+        private string GetHeaderVector(in IBasicProperties headers)
+        {
+            if (headers != null && headers.Headers != null)
+            {
+                if (headers.Headers.TryGetValue("vector", out object value))
+                {
+                    if (value is byte[] vector1)
+                    {
+                        return Encoding.UTF8.GetString(vector1);
+                    }
+                    else if (value is string vector2)
+                    {
+                        return vector2;
+                    }
+                }
+            }
+            return string.Empty;
+        }
 
         private void ValidateVector(in BasicDeliverEventArgs args)
         {
@@ -605,18 +647,21 @@ namespace DaJet.RabbitMQ
         {
             IBasicProperties headers = args.BasicProperties;
 
-            string node = headers.AppId;
-            string type = headers.Type;
+            string value = GetHeaderVector(in headers);
+            if (string.IsNullOrEmpty(value)) { return; }
 
-            if (!long.TryParse(headers.MessageId, out long vector) || vector <= 0L)
+            if (!long.TryParse(value, out long vector) || vector <= 0L)
             {
                 return;
             }
+
+            string node = headers.AppId;
             if (string.IsNullOrEmpty(node)) { return; }
+
+            string type = headers.Type;
             if (string.IsNullOrEmpty(type)) { return; }
 
             string key = MessageJsonParser.ExtractEntityKey(type, args.Body);
-
             if (string.IsNullOrEmpty(key)) { return; }
 
             _ = _vectorService?.ValidateVector(node, type, key, vector);
@@ -675,15 +720,16 @@ namespace DaJet.RabbitMQ
         {
             TrackerEvent @event = new TrackerEvent()
             {
-                EventNode = Options.Value.Node,
-                EventType = "RMQDB_CONSUME",
                 Source = headers.AppId ?? string.Empty,
-                MessageId = headers.MessageId ?? string.Empty,
+                MsgUid = headers.MessageId ?? string.Empty,
+                EventNode = Options.Value.ThisNode,
+                EventType = TrackerEventType.RMQDB_CONSUME,
                 EventData = new MessageData()
                 {
-                    Target = Options.Value.Node,
+                    Target = Options.Value.ThisNode,
                     Type = headers.Type ?? string.Empty,
-                    Body = MessageJsonParser.ExtractEntityKey(headers.Type ?? string.Empty, message)
+                    Body = MessageJsonParser.ExtractEntityKey(headers.Type ?? string.Empty, message),
+                    Vector = GetHeaderVector(in headers)
                 }
             };
             _eventTracker.RegisterEvent(@event);
@@ -703,11 +749,10 @@ namespace DaJet.RabbitMQ
         {
             TrackerEvent @event = new TrackerEvent()
             {
-                EventNode = Options.Value.Node,
-                EventType = "RMQDB_INSERT",
                 Source = headers.AppId ?? string.Empty,
-                MessageId = headers.MessageId ?? string.Empty,
-                EventData = null
+                MsgUid = headers.MessageId ?? string.Empty,
+                EventNode = Options.Value.ThisNode,
+                EventType = TrackerEventType.RMQDB_INSERT
             };
             _eventTracker.RegisterEvent(@event);
         }

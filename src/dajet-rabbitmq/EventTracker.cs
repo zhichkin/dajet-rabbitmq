@@ -16,26 +16,31 @@ namespace DaJet.RabbitMQ
         #region "EVENT TRACKER DATABASE SCHEMA"
 
         private const string CREATE_TRACKER_TABLE_SCRIPT =
-            "CREATE TABLE IF NOT EXISTS tracker_events (" +
+            "CREATE TABLE IF NOT EXISTS delivery_tracking_events (" +
+            "source TEXT NOT NULL, " +
+            "msguid TEXT NOT NULL, " +
+            "event_type TEXT NOT NULL, " +
             "event_node TEXT NOT NULL, " +
             "event_time INTEGER NOT NULL, " +
-            "event_type TEXT NOT NULL, " +
             "event_data TEXT NOT NULL, " +
-            "source TEXT NOT NULL, " +
-            "message_id TEXT NOT NULL" +
-            ");";
+            "PRIMARY KEY (source, msguid, event_type, event_node)) WITHOUT ROWID;";
 
-        private const string INSERT_TRACKER_EVENT_SCRIPT =
-            "INSERT INTO tracker_events (" +
-            "event_node, event_time, event_type, event_data, source, message_id) " +
+        private const string UPSERT_TRACKER_EVENT_SCRIPT =
+            "INSERT INTO delivery_tracking_events (" +
+            "source, msguid, event_type, event_node, event_time, event_data) " +
             "VALUES (" +
-            "@event_node, @event_time, @event_type, @event_data, @source, @message_id) " +
-            "RETURNING rowid;";
+            "@source, @msguid, @event_type, @event_node, @event_time, @event_data) " +
+            "ON CONFLICT (source, msguid, event_type, event_node) " +
+            "DO UPDATE SET " +
+            "event_time = excluded.event_time, " +
+            "event_data = excluded.event_data;";
 
         private const string SELECT_TRACKER_EVENT_SCRIPT =
-            "WITH filter AS (SELECT rowid FROM tracker_events ORDER BY rowid ASC LIMIT 1000) " +
-            "DELETE FROM tracker_events WHERE rowid IN filter " +
-            "RETURNING event_node, event_time, event_type, event_data, source, message_id;";
+            "WITH filter AS " +
+            "(SELECT source, msguid, event_type, event_node FROM delivery_tracking_events LIMIT 1000) " +
+            "DELETE FROM delivery_tracking_events " +
+            "WHERE (source, msguid, event_type, event_node) IN filter " +
+            "RETURNING source, msguid, event_type, event_node, event_time, event_data;";
 
         #endregion
 
@@ -56,7 +61,7 @@ namespace DaJet.RabbitMQ
         {
             Assembly asm = Assembly.GetExecutingAssembly();
             string catalogPath = Path.GetDirectoryName(asm.Location);
-            string databaseFile = Path.Combine(catalogPath, "dajet-tracker.db");
+            string databaseFile = Path.Combine(catalogPath, "dajet-monitor.db");
 
             _connectionString = new SqliteConnectionStringBuilder()
             {
@@ -127,23 +132,16 @@ namespace DaJet.RabbitMQ
 
                 using (SqliteCommand command = connection.CreateCommand())
                 {
-                    command.CommandText = INSERT_TRACKER_EVENT_SCRIPT;
+                    command.CommandText = UPSERT_TRACKER_EVENT_SCRIPT;
 
+                    command.Parameters.AddWithValue("source", @event.Source);
+                    command.Parameters.AddWithValue("msguid", @event.MsgUid);
+                    command.Parameters.AddWithValue("event_type", @event.EventType);
                     command.Parameters.AddWithValue("event_node", @event.EventNode);
                     command.Parameters.AddWithValue("event_time", GetUnixDateTime(@event.EventTime));
-                    command.Parameters.AddWithValue("event_type", @event.EventType);
                     command.Parameters.AddWithValue("event_data", eventData);
-                    command.Parameters.AddWithValue("source", @event.Source);
-                    command.Parameters.AddWithValue("message_id", @event.MessageId);
 
-                    using (SqliteDataReader reader = command.ExecuteReader())
-                    {
-                        if (reader.Read())
-                        {
-                            @event.RowId = reader.GetInt64(0); // rowid
-                        }
-                        reader.Close();
-                    }
+                    int recordsAffected = command.ExecuteNonQuery();
                 }
 
                 _ = _tags.TryAdd(@event.DeliveryTag, @event);
@@ -167,12 +165,12 @@ namespace DaJet.RabbitMQ
                         {
                             while (reader.Read())
                             {
-                                @event.EventNode = reader.GetString(0);
-                                @event.EventTime = GetDateTimeFromUnixTime(reader.GetInt64(1));
+                                @event.Source = reader.GetString(0);
+                                @event.MsgUid = reader.GetString(1);
                                 @event.EventType = reader.GetString(2);
-                                @event.EventData = reader.GetString(3);
-                                @event.Source = reader.GetString(4);
-                                @event.MessageId = reader.GetString(5);
+                                @event.EventNode = reader.GetString(3);
+                                @event.EventTime = GetDateTimeFromUnixTime(reader.GetInt64(4));
+                                @event.EventData = reader.GetString(5);
 
                                 yield return @event;
                             }
@@ -222,24 +220,33 @@ namespace DaJet.RabbitMQ
         }
         private void RegisterDeliveryStatus(TrackerEvent @event, PublishStatus status)
         {
+            string eventType = TrackerEventType.UNDEFINED;
+
+            if (status == PublishStatus.Ack)
+            {
+                eventType = TrackerEventType.DBRMQ_ACK;
+            }
+            else if (status == PublishStatus.Nack)
+            {
+                eventType = TrackerEventType.DBRMQ_NACK;
+            }
+
             RegisterEvent(new TrackerEvent()
             {
-                RowId = @event.RowId,
                 DeliveryTag = @event.DeliveryTag,
-                EventNode = @event.EventNode,
-                EventType = $"DBRMQ_{status.ToString().ToUpperInvariant()}",
                 Source = @event.Source,
-                MessageId = @event.MessageId,
-                EventData = null
+                MsgUid = @event.MsgUid,
+                EventNode = @event.EventNode,
+                EventType = eventType
             });
         }
         internal void SetReturnedStatus(string appId, string messageId, string reason)
         {
             RegisterEvent(new TrackerEvent()
             {
-                EventType = $"DBRMQ_RETURN",
+                EventType = TrackerEventType.DBRMQ_RETURN,
                 Source = appId,
-                MessageId = messageId,
+                MsgUid = messageId,
                 EventData = new ReturnEvent() { Reason = reason }
             });
         }

@@ -7,7 +7,7 @@
         public string ErrorLogDatabase { get; set; } = string.Empty;
         public int ErrorLogRetention { get; set; } = 24 * 7; // one week in hours
         public int MessagesPerTransaction { get; set; } = 1000;
-        public string Node { get; set; } = string.Empty;
-        public bool UseTracker { get; set; } = false;
+        public string ThisNode { get; set; } = string.Empty;
+        public bool UseDeliveryTracking { get; set; } = false;
     }
 }
