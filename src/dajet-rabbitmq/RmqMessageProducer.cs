@@ -10,8 +10,12 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Unicode;
+using System.Threading;
 using System.Web;
+using static Microsoft.IO.RecyclableMemoryStreamManager;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
 using V1 = DaJet.Data.Messaging.V1;
 using V10 = DaJet.Data.Messaging.V10;
@@ -30,8 +34,7 @@ namespace DaJet.RabbitMQ
         private byte[] _buffer; // message body buffer
         private PublishTracker _tracker; // publisher confirms tracker
         private ExchangeRoles _exchangeRole = ExchangeRoles.None;
-        private readonly EventTracker _eventTracker = new EventTracker();
-
+        private DeliveryTracker _eventTracker;
         public string HostName { get; private set; } = "localhost";
         public int HostPort { get; private set; } = 5672;
         public string VirtualHost { get; private set; } = "/";
@@ -52,6 +55,9 @@ namespace DaJet.RabbitMQ
         {
             Options = options;
 
+            _eventTracker = new MsDeliveryTracker("Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True;Encrypt=False;");
+            _eventTracker.ConfigureDatabase();
+
             if (Options.Value.UseVectorService && !string.IsNullOrWhiteSpace(Options.Value.VectorDatabase))
             {
                 VectorServiceOptions settings = new VectorServiceOptions()
@@ -66,6 +72,12 @@ namespace DaJet.RabbitMQ
 
         #region "RABBITMQ CONNECTION SETUP"
 
+        public void Initialize()
+        {
+            Connection = CreateConnection();
+            Channel = CreateChannel(Connection);
+            Properties = CreateMessageProperties(Channel);
+        }
         public void Initialize(ExchangeRoles role)
         {
             Connection = CreateConnection();
@@ -410,7 +422,7 @@ namespace DaJet.RabbitMQ
                         ulong deliveryTag = Channel.NextPublishSeqNo;
 
                         _tracker.Track(deliveryTag);
-
+                        
                         if (Options.Value.UseDeliveryTracking)
                         {
                             TrackSelectEvent(deliveryTag, Properties, messageBody);
@@ -452,6 +464,26 @@ namespace DaJet.RabbitMQ
             while (consumer.RecordsAffected > 0);
 
             return produced;
+        }
+        private ReadOnlyMemory<byte> GetMessageBody(in string message)
+        {
+            int bufferSize = message.Length * 2; // char == 2 bytes
+
+            if (_buffer == null)
+            {
+                _buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
+            }
+            else if (_buffer.Length < bufferSize)
+            {
+                ArrayPool<byte>.Shared.Return(_buffer);
+                _buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
+            }
+
+            int encoded = Encoding.UTF8.GetBytes(message, 0, message.Length, _buffer, 0);
+
+            ReadOnlyMemory<byte> messageBody = new ReadOnlyMemory<byte>(_buffer, 0, encoded);
+
+            return messageBody;
         }
         private ReadOnlyMemory<byte> GetMessageBody(in OutgoingMessageDataMapper message) // in EntityJsonSerializer serializer
         {
@@ -813,6 +845,11 @@ namespace DaJet.RabbitMQ
         }
         private void TryTrackSelectEvent(ulong deliveryTag, in IBasicProperties headers, ReadOnlyMemory<byte> message)
         {
+            if (!Guid.TryParse(headers.MessageId, out Guid msgUid))
+            {
+                return;
+            }
+
             string recipients = string.Empty;
 
             foreach (var header in headers.Headers)
@@ -823,13 +860,13 @@ namespace DaJet.RabbitMQ
                 }
             }
 
-            TrackerEvent @event = new TrackerEvent()
+            DeliveryEvent @event = new DeliveryEvent()
             {
                 DeliveryTag = deliveryTag,
                 Source = headers.AppId ?? string.Empty,
-                MsgUid = headers.MessageId ?? string.Empty,
+                MsgUid = msgUid,
                 EventNode = Options.Value.ThisNode,
-                EventType = TrackerEventType.DBRMQ_SELECT,
+                EventType = DeliveryEventType.DBRMQ_SELECT,
                 EventData = new MessageData()
                 {
                     Target = recipients,
@@ -838,6 +875,8 @@ namespace DaJet.RabbitMQ
                     Vector = GetHeaderVector(in headers)
                 }
             };
+
+            _eventTracker.Track(@event);
             _eventTracker.RegisterEvent(@event);
         }
         private void TrackPublishEvent(ulong deliveryTag, in IBasicProperties headers, ReadOnlyMemory<byte> message)
@@ -853,14 +892,20 @@ namespace DaJet.RabbitMQ
         }
         private void TryTrackPublishEvent(ulong deliveryTag, in IBasicProperties headers, ReadOnlyMemory<byte> message)
         {
-            TrackerEvent @event = new TrackerEvent()
+            if (!Guid.TryParse(headers.MessageId, out Guid msgUid))
+            {
+                return;
+            }
+
+            DeliveryEvent @event = new DeliveryEvent()
             {
                 DeliveryTag = deliveryTag,
                 Source = headers.AppId ?? string.Empty,
-                MsgUid = headers.MessageId ?? string.Empty,
+                MsgUid = msgUid,
                 EventNode = Options.Value.ThisNode,
-                EventType = TrackerEventType.DBRMQ_PUBLISH
+                EventType = DeliveryEventType.DBRMQ_PUBLISH
             };
+
             _eventTracker.RegisterEvent(@event);
         }
     }

@@ -6,16 +6,35 @@ using DaJet.Logging;
 using DaJet.Metadata;
 using DaJet.Metadata.Model;
 using Microsoft.Extensions.Options;
+using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using RabbitMQ.Client;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
+using System.Runtime;
 using System.Threading;
 using System.Timers;
 
 namespace DaJet.RabbitMQ.Test
 {
+    public sealed class DeliveryEventProcessor : IDeliveryEventProcessor
+    {
+        public void Process(DeliveryEvent @event)
+        {
+            Console.WriteLine("***");
+            Console.WriteLine();
+
+            foreach (PropertyInfo property in typeof(DeliveryEvent).GetProperties())
+            {
+                object value = property.GetValue(@event, null);
+                Console.WriteLine($"{property.Name} = {value}");
+            }
+        }
+    }
+
     [TestClass] public class UsageTests
     {
         private const string INCOMING_QUEUE_NAME = "–егистр—ведений.¬ход€ща€ќчередь10";
@@ -36,7 +55,7 @@ namespace DaJet.RabbitMQ.Test
                 Console.WriteLine(error);
                 return;
             }
-            
+
             ApplicationObject queue = infoBase.GetApplicationObjectByName(OUTGOING_QUEUE_NAME);
             if (queue == null)
             {
@@ -110,7 +129,7 @@ namespace DaJet.RabbitMQ.Test
         [TestMethod] public void TestRmqMessageConsumer()
         {
             string uri = "amqp://guest:guest@localhost:5672/%2F";
-            
+
             FileLogger.UseCatalog("C:\\temp");
             FileLogger.UseFileName("rmq-test");
 
@@ -141,7 +160,7 @@ namespace DaJet.RabbitMQ.Test
 
             StopConsumerOptionsUpdateService();
         }
-        
+
         private System.Timers.Timer _timer;
         private IOptions<RmqConsumerOptions> _options;
         private void StartConsumerOptionsUpdateService()
@@ -175,7 +194,7 @@ namespace DaJet.RabbitMQ.Test
 
             ExchangePlanHelper settings = new ExchangePlanHelper(in infoBase, DatabaseProvider.SQLServer, MS_CONNECTION_STRING);
             settings.ConfigureSelectScripts("ѕланќбмена.DaJetMessaging", "test.test");
-            
+
             return settings.GetIncomingQueueNames();
         }
 
@@ -270,7 +289,7 @@ namespace DaJet.RabbitMQ.Test
                 Queues = new List<string>() { "dajet-queue" }
             });
 
-            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
             using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri))
             {
@@ -348,28 +367,28 @@ namespace DaJet.RabbitMQ.Test
         }
         [TestMethod] public void ReadTrackerEvents()
         {
-            using (EventTracker tracker = new EventTracker())
+            using (MsDeliveryTracker tracker = new MsDeliveryTracker(MS_CONNECTION_STRING))
             {
-                int counter = 0;
-
-                foreach (TrackerEvent @event in tracker.SelectTrackerEvents())
-                {
-                    counter++;
-                    Console.WriteLine("***");
-                    Console.WriteLine();
-
-                    foreach (PropertyInfo property in typeof(TrackerEvent).GetProperties())
-                    {
-                        object value = property.GetValue(@event, null);
-                        Console.WriteLine($"{property.Name} = {value}");
-                    }
-
-                    //if (counter == 15)
-                    //{
-                    //    throw new Exception("test transactional Sqlite destructive read");
-                    //}
-                }
+                tracker.ProcessEvents(new DeliveryEventProcessor());
             }
         }
+
+        //[TestMethod] public void PublishTrackerEvents()
+        //{
+        //    string queue = "dajet-agent-monitor";
+        //    string uri = "amqp://guest:guest@localhost:5672/%2f/";
+
+        //    CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(600));
+
+        //    int published = 0;
+
+        //    using (EventTracker tracker = new EventTracker())
+        //    {
+        //        published = tracker.Publish(uri, queue, stop.Token);
+        //    }
+
+        //    Console.WriteLine($"[Delivery tracking] Published {published} events.");
+        //}
+
     }
 }

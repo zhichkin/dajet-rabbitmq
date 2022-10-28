@@ -29,7 +29,7 @@ namespace DaJet.RabbitMQ
 
         private IConnection Connection;
         private readonly ConcurrentDictionary<string, EventingBasicConsumer> Consumers = new ConcurrentDictionary<string, EventingBasicConsumer>();
-        private readonly EventTracker _eventTracker = new EventTracker();
+        private DeliveryTracker _eventTracker;
 
         public string HostName { get; private set; } = "localhost";
         public int HostPort { get; private set; } = 5672;
@@ -90,6 +90,9 @@ namespace DaJet.RabbitMQ
         public void Configure(IOptions<RmqConsumerOptions> options)
         {
             Options = options;
+
+            _eventTracker = new MsDeliveryTracker("Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True;Encrypt=False;");
+            _eventTracker.ConfigureDatabase();
 
             if (Options.Value.UseVectorService && !string.IsNullOrWhiteSpace(Options.Value.VectorDatabase))
             {
@@ -718,12 +721,17 @@ namespace DaJet.RabbitMQ
         }
         private void TryTrackConsumeEvent(in IBasicProperties headers, in ReadOnlyMemory<byte> message)
         {
-            TrackerEvent @event = new TrackerEvent()
+            if (!Guid.TryParse(headers.MessageId, out Guid msgUid))
+            {
+                return;
+            }
+
+            DeliveryEvent @event = new DeliveryEvent()
             {
                 Source = headers.AppId ?? string.Empty,
-                MsgUid = headers.MessageId ?? string.Empty,
+                MsgUid = msgUid,
                 EventNode = Options.Value.ThisNode,
-                EventType = TrackerEventType.RMQDB_CONSUME,
+                EventType = DeliveryEventType.RMQDB_CONSUME,
                 EventData = new MessageData()
                 {
                     Target = Options.Value.ThisNode,
@@ -732,6 +740,7 @@ namespace DaJet.RabbitMQ
                     Vector = GetHeaderVector(in headers)
                 }
             };
+
             _eventTracker.RegisterEvent(@event);
         }
         private void TrackInsertEvent(in IBasicProperties headers, in ReadOnlyMemory<byte> message)
@@ -747,13 +756,19 @@ namespace DaJet.RabbitMQ
         }
         private void TryTrackInsertEvent(in IBasicProperties headers, in ReadOnlyMemory<byte> message)
         {
-            TrackerEvent @event = new TrackerEvent()
+            if (!Guid.TryParse(headers.MessageId, out Guid msgUid))
+            {
+                return;
+            }
+
+            DeliveryEvent @event = new DeliveryEvent()
             {
                 Source = headers.AppId ?? string.Empty,
-                MsgUid = headers.MessageId ?? string.Empty,
+                MsgUid = msgUid,
                 EventNode = Options.Value.ThisNode,
-                EventType = TrackerEventType.RMQDB_INSERT
+                EventType = DeliveryEventType.RMQDB_INSERT
             };
+
             _eventTracker.RegisterEvent(@event);
         }
     }

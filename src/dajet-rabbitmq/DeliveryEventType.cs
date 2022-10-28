@@ -1,6 +1,6 @@
 ﻿namespace DaJet.RabbitMQ
 {
-    public static class TrackerEventType
+    public static class DeliveryEventType
     {
         public static readonly string UNDEFINED = "UNDEFINED";
 
