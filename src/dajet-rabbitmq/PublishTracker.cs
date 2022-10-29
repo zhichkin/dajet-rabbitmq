@@ -3,7 +3,7 @@ using System.Threading;
 
 namespace DaJet.RabbitMQ
 {
-    internal enum PublishStatus { New, Ack, Nack }
+    public enum PublishStatus { New, Ack, Nack }
     internal sealed class PublishTracker
     {
         private long _returned = 0L;

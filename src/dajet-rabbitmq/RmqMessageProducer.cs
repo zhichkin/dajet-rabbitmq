@@ -187,95 +187,6 @@ namespace DaJet.RabbitMQ
             properties.ContentEncoding = "UTF-8";
             return properties;
         }
-        private void BasicAcksHandler(object sender, BasicAckEventArgs args)
-        {
-            _tracker?.SetAckStatus(args.DeliveryTag, args.Multiple);
-
-            if (Options.Value.UseDeliveryTracking)
-            {
-                _eventTracker.SetAckStatus(args.DeliveryTag, args.Multiple);
-            }
-        }
-        private void BasicNacksHandler(object sender, BasicNackEventArgs args)
-        {
-            _tracker?.SetNackStatus(args.DeliveryTag, args.Multiple);
-
-            if (Options.Value.UseDeliveryTracking)
-            {
-                _eventTracker.SetNackStatus(args.DeliveryTag, args.Multiple);
-            }
-        }
-        private void BasicReturnHandler(object sender, BasicReturnEventArgs args)
-        {
-            if (_tracker != null && _tracker.IsReturned)
-            {
-                return; // already marked as returned
-            }
-
-            string reason =
-                "Message return (" + args.ReplyCode.ToString() + "): " +
-                (string.IsNullOrWhiteSpace(args.ReplyText) ? "(empty)" : args.ReplyText) + ". " +
-                "Exchange: " + (string.IsNullOrWhiteSpace(args.Exchange) ? "(empty)" : args.Exchange) + ". " +
-                "RoutingKey: " + (string.IsNullOrWhiteSpace(args.RoutingKey) ? "(empty)" : args.RoutingKey) + ".";
-
-            if (args.BasicProperties != null &&
-                args.BasicProperties.Headers != null &&
-                args.BasicProperties.Headers.TryGetValue("CC", out object value) &&
-                value != null &&
-                value is List<object> recipients &&
-                recipients != null &&
-                recipients.Count > 0)
-            {
-                string cc = string.Empty;
-
-                for (int i = 0; i < recipients.Count; i++)
-                {
-                    if (i == 10)
-                    {
-                        cc += ",...";
-
-                        break;
-                    }
-
-                    if (recipients[i] is byte[] recipient)
-                    {
-                        if (string.IsNullOrEmpty(cc))
-                        {
-                            cc = Encoding.UTF8.GetString(recipient);
-                        }
-                        else
-                        {
-                            cc += "," + Encoding.UTF8.GetString(recipient);
-                        }
-                    }
-                }
-
-                if (!string.IsNullOrEmpty(cc))
-                {
-                    reason += " CC: " + cc;
-                }
-            }
-
-            _tracker?.SetReturnedStatus(reason);
-
-            if (Options.Value.UseDeliveryTracking &&
-                args.BasicProperties != null &&
-                args.BasicProperties.IsAppIdPresent() &&
-                args.BasicProperties.IsMessageIdPresent())
-            {
-                _eventTracker.SetReturnedStatus(args.BasicProperties.AppId, args.BasicProperties.MessageId, reason);
-            }
-        }
-        private void ModelShutdownHandler(object sender, ShutdownEventArgs args)
-        {
-            string reason = $"Channel shutdown ({args.ReplyCode}): {args.ReplyText}";
-            _tracker?.SetShutdownStatus(reason);
-
-            if (Options.Value.UseDeliveryTracking)
-            {
-                _eventTracker.SetShutdownStatus(args.ToString());
-            }
-        }
         public void Dispose()
         {
             if (Channel != null)
@@ -397,69 +308,73 @@ namespace DaJet.RabbitMQ
 
             do
             {
-                using (_eventTracker)
+                consumer.TxBegin();
+
+                _tracker = new PublishTracker();
+                _eventTracker = new MsDeliveryTracker("Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True;Encrypt=False;");
+
+                foreach (OutgoingMessageDataMapper message in consumer.Select(Options.Value.MessagesPerTransaction))
                 {
-                    consumer.TxBegin();
-
-                    _tracker = new PublishTracker();
-
-                    foreach (OutgoingMessageDataMapper message in consumer.Select(Options.Value.MessagesPerTransaction))
+                    if (ConnectionIsBlocked)
                     {
-                        if (ConnectionIsBlocked)
-                        {
-                            throw new Exception("Connection is blocked");
-                        }
-
-                        ConfigureMessageProperties(in message, Properties);
-
-                        ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
-
-                        if (Options.Value.UseVectorService)
-                        {
-                            ValidateVector(Properties, messageBody);
-                        }
-
-                        ulong deliveryTag = Channel.NextPublishSeqNo;
-
-                        _tracker.Track(deliveryTag);
-                        
-                        if (Options.Value.UseDeliveryTracking)
-                        {
-                            TrackSelectEvent(deliveryTag, Properties, messageBody);
-                        }
-
-                        if (string.IsNullOrWhiteSpace(RoutingKey))
-                        {
-                            Channel.BasicPublish(ExchangeName, message.MessageType, true, Properties, messageBody);
-                        }
-                        else
-                        {
-                            Channel.BasicPublish(ExchangeName, RoutingKey, true, Properties, messageBody);
-                        }
-
-                        if (Options.Value.UseDeliveryTracking)
-                        {
-                            TrackPublishEvent(deliveryTag, Properties, messageBody);
-                        }
-
-                        produced++;
+                        throw new Exception("Connection is blocked");
                     }
 
-                    if (consumer.RecordsAffected > 0)
+                    ConfigureMessageProperties(in message, Properties);
+
+                    ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
+
+                    if (Options.Value.UseVectorService)
                     {
-                        if (!Channel.WaitForConfirms())
-                        {
-                            throw new Exception("WaitForConfirms error");
-                        }
+                        ValidateVector(Properties, messageBody);
                     }
 
-                    if (_tracker.HasErrors())
+                    ulong deliveryTag = Channel.NextPublishSeqNo;
+
+                    _tracker.Track(deliveryTag);
+
+                    if (Options.Value.UseDeliveryTracking)
                     {
-                        throw new Exception(_tracker.ErrorReason);
+                        TrackSelectEvent(deliveryTag, Properties, messageBody);
                     }
 
-                    consumer.TxCommit();
+                    if (string.IsNullOrWhiteSpace(RoutingKey))
+                    {
+                        Channel.BasicPublish(ExchangeName, message.MessageType, true, Properties, messageBody);
+                    }
+                    else
+                    {
+                        Channel.BasicPublish(ExchangeName, RoutingKey, true, Properties, messageBody);
+                    }
+
+                    if (Options.Value.UseDeliveryTracking)
+                    {
+                        TrackPublishEvent(deliveryTag, Properties, messageBody);
+                    }
+
+                    produced++;
                 }
+
+                if (consumer.RecordsAffected > 0)
+                {
+                    if (!Channel.WaitForConfirms())
+                    {
+                        throw new Exception("WaitForConfirms error");
+                    }
+                }
+
+                if (_tracker.HasErrors())
+                {
+                    throw new Exception(_tracker.ErrorReason);
+                }
+                else
+                {
+                    _eventTracker.RegisterSuccess();
+                }
+
+                _eventTracker.Dispose();
+
+                consumer.TxCommit();
             }
             while (consumer.RecordsAffected > 0);
 
@@ -831,6 +746,95 @@ namespace DaJet.RabbitMQ
         }
 
 
+        private void BasicAcksHandler(object sender, BasicAckEventArgs args)
+        {
+            _tracker?.SetAckStatus(args.DeliveryTag, args.Multiple);
+
+            if (Options.Value.UseDeliveryTracking)
+            {
+                _eventTracker.SetAckStatus(args.DeliveryTag, args.Multiple);
+            }
+        }
+        private void BasicNacksHandler(object sender, BasicNackEventArgs args)
+        {
+            _tracker?.SetNackStatus(args.DeliveryTag, args.Multiple);
+
+            if (Options.Value.UseDeliveryTracking)
+            {
+                _eventTracker.SetNackStatus(args.DeliveryTag, args.Multiple);
+            }
+        }
+        private void BasicReturnHandler(object sender, BasicReturnEventArgs args)
+        {
+            if (_tracker != null && _tracker.IsReturned)
+            {
+                return; // already marked as returned
+            }
+
+            string reason =
+                "Message return (" + args.ReplyCode.ToString() + "): " +
+                (string.IsNullOrWhiteSpace(args.ReplyText) ? "(empty)" : args.ReplyText) + ". " +
+                "Exchange: " + (string.IsNullOrWhiteSpace(args.Exchange) ? "(empty)" : args.Exchange) + ". " +
+                "RoutingKey: " + (string.IsNullOrWhiteSpace(args.RoutingKey) ? "(empty)" : args.RoutingKey) + ".";
+
+            if (args.BasicProperties != null &&
+                args.BasicProperties.Headers != null &&
+                args.BasicProperties.Headers.TryGetValue("CC", out object value) &&
+                value != null &&
+                value is List<object> recipients &&
+                recipients != null &&
+                recipients.Count > 0)
+            {
+                string cc = string.Empty;
+
+                for (int i = 0; i < recipients.Count; i++)
+                {
+                    if (i == 10)
+                    {
+                        cc += ",...";
+
+                        break;
+                    }
+
+                    if (recipients[i] is byte[] recipient)
+                    {
+                        if (string.IsNullOrEmpty(cc))
+                        {
+                            cc = Encoding.UTF8.GetString(recipient);
+                        }
+                        else
+                        {
+                            cc += "," + Encoding.UTF8.GetString(recipient);
+                        }
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(cc))
+                {
+                    reason += " CC: " + cc;
+                }
+            }
+
+            _tracker?.SetReturnedStatus(reason);
+
+            if (Options.Value.UseDeliveryTracking &&
+                args.BasicProperties != null &&
+                args.BasicProperties.IsAppIdPresent() &&
+                args.BasicProperties.IsMessageIdPresent())
+            {
+                _eventTracker.SetReturnedStatus(args.BasicProperties.AppId, args.BasicProperties.MessageId, reason);
+            }
+        }
+        private void ModelShutdownHandler(object sender, ShutdownEventArgs args)
+        {
+            string reason = $"Channel shutdown ({args.ReplyCode}): {args.ReplyText}";
+            _tracker?.SetShutdownStatus(reason);
+
+            if (Options.Value.UseDeliveryTracking)
+            {
+                _eventTracker.SetShutdownStatus(args.ToString());
+            }
+        }
 
         private void TrackSelectEvent(ulong deliveryTag, in IBasicProperties headers, ReadOnlyMemory<byte> message)
         {

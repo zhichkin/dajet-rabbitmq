@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using static Microsoft.IO.RecyclableMemoryStreamManager;
 
 namespace DaJet.RabbitMQ
 {
@@ -9,13 +11,16 @@ namespace DaJet.RabbitMQ
     }
     public abstract class DeliveryTracker : IDisposable
     {
-        private readonly ConcurrentDictionary<ulong, DeliveryEvent> _tags = new ConcurrentDictionary<ulong, DeliveryEvent>();
+        protected readonly ConcurrentDictionary<ulong, DeliveryEvent> _tags = new ConcurrentDictionary<ulong, DeliveryEvent>();
         protected DeliveryTracker() { }
         public abstract void ConfigureDatabase();
         public abstract void RegisterEvent(DeliveryEvent @event);
+        public abstract void RegisterSuccess();
         public abstract void ProcessEvents(IDeliveryEventProcessor processor);
+        protected abstract void _Dispose();
         public void Dispose()
         {
+            _Dispose();
             _tags.Clear();
         }
         public void Track(DeliveryEvent @event)
@@ -46,7 +51,16 @@ namespace DaJet.RabbitMQ
         }
         private void SetSingleStatus(ulong deliveryTag, PublishStatus status)
         {
-            RegisterDeliveryStatus(_tags[deliveryTag], status);
+            DeliveryEvent select = _tags[deliveryTag];
+
+            if (select.Delivered)
+            {
+                return;
+            }
+
+            select.Delivered = true;
+
+            RegisterDeliveryStatus(select, status);
         }
         private void SetMultipleStatus(ulong deliveryTag, PublishStatus status)
         {
@@ -54,7 +68,16 @@ namespace DaJet.RabbitMQ
             {
                 if (item.Key <= deliveryTag)
                 {
-                    RegisterDeliveryStatus(_tags[item.Key], status);
+                    DeliveryEvent select = _tags[item.Key];
+
+                    if (select.Delivered)
+                    {
+                        continue;
+                    }
+
+                    select.Delivered = true;
+
+                    RegisterDeliveryStatus(select, status);
                 }
             }
         }

@@ -8,6 +8,7 @@ namespace DaJet.RabbitMQ
 {
     public sealed class DeliveryEvent
     {
+        [JsonIgnore] public bool Delivered { get; set; } = false;
         [JsonIgnore] public ulong DeliveryTag { get; set; } = ulong.MinValue;
         [JsonPropertyName("msguid")] public Guid MsgUid { get; set; } = Guid.Empty;
         [JsonPropertyName("source")] public string Source { get; set; } = string.Empty;
