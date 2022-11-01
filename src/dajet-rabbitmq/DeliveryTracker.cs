@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using static Microsoft.IO.RecyclableMemoryStreamManager;
+using System.Threading;
 
 namespace DaJet.RabbitMQ
 {
@@ -9,125 +8,135 @@ namespace DaJet.RabbitMQ
     {
         void Process(DeliveryEvent @event);
     }
-    public abstract class DeliveryTracker : IDisposable
+    public abstract class DeliveryTracker
     {
-        protected readonly ConcurrentDictionary<ulong, DeliveryEvent> _tags = new ConcurrentDictionary<ulong, DeliveryEvent>();
+        private long _shutdown = 0L;
+        private string _reason = string.Empty;
+        protected readonly ConcurrentDictionary<ulong, OutMessageInfo> _events = new ConcurrentDictionary<ulong, OutMessageInfo>(1, 1000);
+
         protected DeliveryTracker() { }
         public abstract void ConfigureDatabase();
-        public abstract void RegisterEvent(DeliveryEvent @event);
-        public abstract void RegisterSuccess();
         public abstract void ProcessEvents(IDeliveryEventProcessor processor);
-        protected abstract void _Dispose();
-        public void Dispose()
+        internal abstract void FlushEvents();
+        internal void ClearEvents() { _events.Clear(); }
+        
+        internal void RegisterSelectEvent(ulong deliveryTag, OutMessageInfo message)
         {
-            _Dispose();
-            _tags.Clear();
+            _ = _events.TryAdd(deliveryTag, message);
         }
-        public void Track(DeliveryEvent @event)
+        internal void RegisterPublishEvent(ulong deliveryTag)
         {
-            _ = _tags.TryAdd(@event.DeliveryTag, @event);
-        }
-        public void SetAckStatus(ulong deliveryTag, bool multiple)
-        {
-            if (multiple)
-            {
-                SetMultipleStatus(deliveryTag, PublishStatus.Ack);
-            }
-            else
-            {
-                SetSingleStatus(deliveryTag, PublishStatus.Ack);
-            }
-        }
-        public void SetNackStatus(ulong deliveryTag, bool multiple)
-        {
-            if (multiple)
-            {
-                SetMultipleStatus(deliveryTag, PublishStatus.Nack);
-            }
-            else
-            {
-                SetSingleStatus(deliveryTag, PublishStatus.Nack);
-            }
-        }
-        private void SetSingleStatus(ulong deliveryTag, PublishStatus status)
-        {
-            DeliveryEvent select = _tags[deliveryTag];
+            OutMessageInfo info = _events[deliveryTag];
 
-            if (select.Delivered)
+            info.EventType = DeliveryEventTypes.DBRMQ_PUBLISH;
+            info.EventPublish = DateTime.UtcNow;
+        }
+        internal void SetAckStatus(ulong deliveryTag, bool multiple)
+        {
+            if (multiple)
+            {
+                SetMultipleStatus(deliveryTag, DeliveryEventTypes.DBRMQ_ACK);
+            }
+            else
+            {
+                SetSingleStatus(deliveryTag, DeliveryEventTypes.DBRMQ_ACK);
+            }
+        }
+        internal void SetNackStatus(ulong deliveryTag, bool multiple)
+        {
+            if (multiple)
+            {
+                SetMultipleStatus(deliveryTag, DeliveryEventTypes.DBRMQ_NACK);
+            }
+            else
+            {
+                SetSingleStatus(deliveryTag, DeliveryEventTypes.DBRMQ_NACK);
+            }
+        }
+        private void SetSingleStatus(ulong deliveryTag, DeliveryEventTypes eventType)
+        {
+            OutMessageInfo info = _events[deliveryTag];
+
+            info.EventType = eventType;
+            info.EventConfirm = DateTime.UtcNow;
+        }
+        private void SetMultipleStatus(ulong deliveryTag, DeliveryEventTypes eventType)
+        {
+            ulong currentTag = deliveryTag;
+            
+            OutMessageInfo info = _events[currentTag];
+            
+            do
+            {
+                info.EventType = eventType;
+                info.EventConfirm = DateTime.UtcNow;
+
+                if (currentTag > 1)
+                {
+                    currentTag--;
+                    info = _events[currentTag];
+                }
+            }
+            while (info.EventConfirm == DateTime.MinValue);
+        }
+        internal void SetReturnStatus(string messageId, string reason)
+        {
+            if (!Guid.TryParse(messageId, out Guid uuid))
             {
                 return;
             }
 
-            select.Delivered = true;
-
-            RegisterDeliveryStatus(select, status);
-        }
-        private void SetMultipleStatus(ulong deliveryTag, PublishStatus status)
-        {
-            foreach (var item in _tags)
+            foreach (OutMessageInfo info in _events.Values)
             {
-                if (item.Key <= deliveryTag)
+                if (info.MsgUid == uuid)
                 {
-                    DeliveryEvent select = _tags[item.Key];
-
-                    if (select.Delivered)
-                    {
-                        continue;
-                    }
-
-                    select.Delivered = true;
-
-                    RegisterDeliveryStatus(select, status);
+                    info.Body = reason;
+                    info.EventReturn = DateTime.UtcNow;
+                    break;
                 }
             }
         }
-        private void RegisterDeliveryStatus(DeliveryEvent @event, PublishStatus status)
+        internal void SetShutdownStatus(string reason)
         {
-            string eventType = DeliveryEventType.UNDEFINED;
+            Interlocked.Increment(ref _shutdown);
 
-            if (status == PublishStatus.Ack)
-            {
-                eventType = DeliveryEventType.DBRMQ_ACK;
-            }
-            else if (status == PublishStatus.Nack)
-            {
-                eventType = DeliveryEventType.DBRMQ_NACK;
-            }
-
-            RegisterEvent(new DeliveryEvent()
-            {
-                DeliveryTag = @event.DeliveryTag,
-                Source = @event.Source,
-                MsgUid = @event.MsgUid,
-                EventNode = @event.EventNode,
-                EventType = eventType
-            });
+            _reason = reason;
         }
-        public void SetReturnedStatus(string appId, string messageId, string reason)
+
+        internal bool IsShutdown
         {
-            if (!Guid.TryParse(messageId, out Guid msgUid))
+            get
             {
-                return;
+                return (Interlocked.Read(ref _shutdown) > 0);
+            }
+        }
+        internal string ShutdownReason
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(_reason))
+                {
+                    _reason = "Shutdown reason is unknown.";
+                }
+                return _reason;
+            }
+        }
+        internal bool HasErrors()
+        {
+            if (IsShutdown)
+            {
+                return true;
             }
 
-            RegisterEvent(new DeliveryEvent()
+            foreach (OutMessageInfo info in _events.Values)
             {
-                EventType = DeliveryEventType.DBRMQ_RETURN,
-                Source = appId,
-                MsgUid = msgUid,
-                EventData = new ReturnEvent() { Reason = reason }
-            });
-        }
-        public void SetShutdownStatus(string reason)
-        {
-            //if (!string.IsNullOrEmpty(reason))
-            //{
-            //    RegisterEvent(new DeliveryEvent()
-            //    {
-            //        EventType = DeliveryEventType.DBRMQ_SHUTDOWN,
-            //        EventData = new ShutdownEvent() { Reason = reason }
-            //    });
-            //}
+                if (info.EventType != DeliveryEventTypes.DBRMQ_ACK)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }

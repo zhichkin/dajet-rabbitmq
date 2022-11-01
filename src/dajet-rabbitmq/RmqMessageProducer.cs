@@ -9,6 +9,7 @@ using RabbitMQ.Client.Events;
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Reflection.PortableExecutable;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -34,7 +35,7 @@ namespace DaJet.RabbitMQ
         private byte[] _buffer; // message body buffer
         private PublishTracker _tracker; // publisher confirms tracker
         private ExchangeRoles _exchangeRole = ExchangeRoles.None;
-        private DeliveryTracker _eventTracker;
+        private DeliveryTracker _eventTracker; // message delivery tracking service
         public string HostName { get; private set; } = "localhost";
         public int HostPort { get; private set; } = 5672;
         public string VirtualHost { get; private set; } = "/";
@@ -212,7 +213,11 @@ namespace DaJet.RabbitMQ
                 _tracker = null;
             }
 
-            _eventTracker.Dispose();
+            if (_eventTracker != null)
+            {
+                _eventTracker.ClearEvents();
+                _eventTracker = null;
+            }
         }
 
         #endregion
@@ -250,7 +255,7 @@ namespace DaJet.RabbitMQ
 
         public void Publish(OutgoingMessageDataMapper message)
         {
-            ConfigureMessageProperties(in message, Properties);
+            ConfigureMessageProperties(in message, Properties, null);
 
             ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
 
@@ -311,7 +316,11 @@ namespace DaJet.RabbitMQ
                 consumer.TxBegin();
 
                 _tracker = new PublishTracker();
-                _eventTracker = new MsDeliveryTracker("Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True;Encrypt=False;");
+
+                if (Options.Value.UseDeliveryTracking)
+                {
+                    _eventTracker = new MsDeliveryTracker("Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True;Encrypt=False;");
+                }
 
                 foreach (OutgoingMessageDataMapper message in consumer.Select(Options.Value.MessagesPerTransaction))
                 {
@@ -320,7 +329,12 @@ namespace DaJet.RabbitMQ
                         throw new Exception("Connection is blocked");
                     }
 
-                    ConfigureMessageProperties(in message, Properties);
+                    OutMessageInfo deliveryInfo = null;
+                    if (Options.Value.UseDeliveryTracking)
+                    {
+                        deliveryInfo = new OutMessageInfo() { EventNode = Options.Value.ThisNode };
+                    }
+                    ConfigureMessageProperties(in message, Properties, in deliveryInfo);
 
                     ReadOnlyMemory<byte> messageBody = GetMessageBody(in message);
 
@@ -335,7 +349,8 @@ namespace DaJet.RabbitMQ
 
                     if (Options.Value.UseDeliveryTracking)
                     {
-                        TrackSelectEvent(deliveryTag, Properties, messageBody);
+                        deliveryInfo.Body = MessageJsonParser.ExtractEntityKey(deliveryInfo.Type, messageBody);
+                        _eventTracker.RegisterSelectEvent(deliveryTag, deliveryInfo);
                     }
 
                     if (string.IsNullOrWhiteSpace(RoutingKey))
@@ -349,7 +364,7 @@ namespace DaJet.RabbitMQ
 
                     if (Options.Value.UseDeliveryTracking)
                     {
-                        TrackPublishEvent(deliveryTag, Properties, messageBody);
+                        _eventTracker.RegisterPublishEvent(deliveryTag);
                     }
 
                     produced++;
@@ -365,40 +380,19 @@ namespace DaJet.RabbitMQ
 
                 if (_tracker.HasErrors())
                 {
-                    throw new Exception(_tracker.ErrorReason);
-                }
-                else
-                {
-                    _eventTracker.RegisterSuccess();
+                    throw new Exception("Delivery failure");
                 }
 
-                _eventTracker.Dispose();
+                if (Options.Value.UseDeliveryTracking)
+                {
+                    _eventTracker.FlushEvents();
+                }
 
                 consumer.TxCommit();
             }
             while (consumer.RecordsAffected > 0);
 
             return produced;
-        }
-        private ReadOnlyMemory<byte> GetMessageBody(in string message)
-        {
-            int bufferSize = message.Length * 2; // char == 2 bytes
-
-            if (_buffer == null)
-            {
-                _buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
-            }
-            else if (_buffer.Length < bufferSize)
-            {
-                ArrayPool<byte>.Shared.Return(_buffer);
-                _buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
-            }
-
-            int encoded = Encoding.UTF8.GetBytes(message, 0, message.Length, _buffer, 0);
-
-            ReadOnlyMemory<byte> messageBody = new ReadOnlyMemory<byte>(_buffer, 0, encoded);
-
-            return messageBody;
         }
         private ReadOnlyMemory<byte> GetMessageBody(in OutgoingMessageDataMapper message) // in EntityJsonSerializer serializer
         {
@@ -451,28 +445,39 @@ namespace DaJet.RabbitMQ
                 properties.Headers["vector"] = vector.ToString();
             }
         }
-        private void ConfigureMessageProperties(in OutgoingMessageDataMapper message, IBasicProperties properties)
+        private void ConfigureMessageProperties(in OutgoingMessageDataMapper message, IBasicProperties properties, in OutMessageInfo deliveryInfo)
         {
             if (message is V1.OutgoingMessage message1)
             {
-                ConfigureMessageProperties(in message1, properties);
+                ConfigureMessageProperties(in message1, properties, in deliveryInfo);
             }
             else if (message is V10.OutgoingMessage message10)
             {
-                ConfigureMessageProperties(in message10, properties);
+                ConfigureMessageProperties(in message10, properties, in deliveryInfo);
             }
             else if (message is V11.OutgoingMessage message11)
             {
-                ConfigureMessageProperties(in message11, properties);
+                ConfigureMessageProperties(in message11, properties, in deliveryInfo);
             }
             else if (message is V12.OutgoingMessage message12)
             {
-                ConfigureMessageProperties(in message12, properties);
+                ConfigureMessageProperties(in message12, properties, in deliveryInfo);
             }
         }
 
-        private void ConfigureMessageProperties(in V10.OutgoingMessage message, IBasicProperties properties)
+        private void ConfigureMessageProperties(in V10.OutgoingMessage message, IBasicProperties properties, in OutMessageInfo deliveryInfo)
         {
+            if (deliveryInfo != null)
+            {
+                deliveryInfo.MsgUid = message.Uuid;
+                deliveryInfo.Type = message.MessageType;
+                deliveryInfo.AppId = message.Sender;
+                deliveryInfo.Recipients = message.Recipients;
+                deliveryInfo.EventSelect = DateTime.UtcNow;
+                deliveryInfo.EventType = DeliveryEventTypes.DBRMQ_SELECT;
+                deliveryInfo.Vector = message.MessageNumber.ToString();
+            }
+
             properties.AppId = message.Sender;
             properties.Type = message.MessageType;
             properties.MessageId = message.Uuid.ToString();
@@ -526,8 +531,19 @@ namespace DaJet.RabbitMQ
             properties.Headers.Add("CC", message.Recipients.Split(',', StringSplitOptions.RemoveEmptyEntries));
         }
 
-        private void ConfigureMessageProperties(in V11.OutgoingMessage message, IBasicProperties properties)
+        private void ConfigureMessageProperties(in V11.OutgoingMessage message, IBasicProperties properties, in OutMessageInfo deliveryInfo)
         {
+            if (deliveryInfo != null)
+            {
+                deliveryInfo.MsgUid = message.Uuid;
+                deliveryInfo.Type = message.MessageType;
+                deliveryInfo.AppId = message.Sender;
+                deliveryInfo.Recipients = message.Recipients;
+                deliveryInfo.EventSelect = DateTime.UtcNow;
+                deliveryInfo.EventType = DeliveryEventTypes.DBRMQ_SELECT;
+                deliveryInfo.Vector = message.MessageNumber.ToString();
+            }
+
             properties.AppId = message.Sender;
             properties.Type = message.MessageType;
             properties.MessageId = message.Uuid.ToString();
@@ -597,8 +613,19 @@ namespace DaJet.RabbitMQ
             properties.Headers.Add("CC", message.Recipients.Split(',', StringSplitOptions.RemoveEmptyEntries));
         }
 
-        private void ConfigureMessageProperties(in V12.OutgoingMessage message, IBasicProperties properties)
+        private void ConfigureMessageProperties(in V12.OutgoingMessage message, IBasicProperties properties, in OutMessageInfo deliveryInfo)
         {
+            if (deliveryInfo != null)
+            {
+                deliveryInfo.MsgUid = message.Uuid;
+                deliveryInfo.Type = message.MessageType;
+                deliveryInfo.AppId = message.Sender;
+                deliveryInfo.Recipients = message.Recipients;
+                deliveryInfo.EventSelect = DateTime.UtcNow;
+                deliveryInfo.EventType = DeliveryEventTypes.DBRMQ_SELECT;
+                deliveryInfo.Vector = message.MessageNumber.ToString();
+            }
+
             properties.AppId = message.Sender;
             properties.Type = message.MessageType;
             properties.MessageId = message.Uuid.ToString();
@@ -652,8 +679,19 @@ namespace DaJet.RabbitMQ
             properties.Headers.Add("CC", message.Recipients.Split(',', StringSplitOptions.RemoveEmptyEntries));
         }
 
-        private void ConfigureMessageProperties(in V1.OutgoingMessage message, IBasicProperties properties)
+        private void ConfigureMessageProperties(in V1.OutgoingMessage message, IBasicProperties properties, in OutMessageInfo deliveryInfo)
         {
+            if (deliveryInfo != null)
+            {
+                deliveryInfo.MsgUid = message.Uuid;
+                deliveryInfo.Type = message.MessageType;
+                deliveryInfo.AppId = Options.Value.ThisNode;
+                deliveryInfo.Recipients = string.Empty;
+                deliveryInfo.EventSelect = DateTime.UtcNow;
+                deliveryInfo.EventType = DeliveryEventTypes.DBRMQ_SELECT;
+                deliveryInfo.Vector = message.MessageNumber.ToString();
+            }
+
             properties.Type = message.MessageType;
             properties.MessageId = message.Uuid.ToString();
 
@@ -746,13 +784,14 @@ namespace DaJet.RabbitMQ
         }
 
 
+
         private void BasicAcksHandler(object sender, BasicAckEventArgs args)
         {
             _tracker?.SetAckStatus(args.DeliveryTag, args.Multiple);
 
             if (Options.Value.UseDeliveryTracking)
             {
-                _eventTracker.SetAckStatus(args.DeliveryTag, args.Multiple);
+                _eventTracker?.SetAckStatus(args.DeliveryTag, args.Multiple);
             }
         }
         private void BasicNacksHandler(object sender, BasicNackEventArgs args)
@@ -761,21 +800,31 @@ namespace DaJet.RabbitMQ
 
             if (Options.Value.UseDeliveryTracking)
             {
-                _eventTracker.SetNackStatus(args.DeliveryTag, args.Multiple);
+                _eventTracker?.SetNackStatus(args.DeliveryTag, args.Multiple);
             }
+        }
+        private string GetReturnReason(in BasicReturnEventArgs args)
+        {
+            return "Message return (" + args.ReplyCode.ToString() + "): " +
+                (string.IsNullOrWhiteSpace(args.ReplyText) ? "(empty)" : args.ReplyText) + ". " +
+                "Exchange: " + (string.IsNullOrWhiteSpace(args.Exchange) ? "(empty)" : args.Exchange) + ". " +
+                "RoutingKey: " + (string.IsNullOrWhiteSpace(args.RoutingKey) ? "(empty)" : args.RoutingKey) + ".";
         }
         private void BasicReturnHandler(object sender, BasicReturnEventArgs args)
         {
+            if (Options.Value.UseDeliveryTracking &&
+                args.BasicProperties != null &&
+                args.BasicProperties.IsMessageIdPresent())
+            {
+                _eventTracker?.SetReturnStatus(args.BasicProperties.MessageId, GetReturnReason(in args));
+            }
+
             if (_tracker != null && _tracker.IsReturned)
             {
                 return; // already marked as returned
             }
 
-            string reason =
-                "Message return (" + args.ReplyCode.ToString() + "): " +
-                (string.IsNullOrWhiteSpace(args.ReplyText) ? "(empty)" : args.ReplyText) + ". " +
-                "Exchange: " + (string.IsNullOrWhiteSpace(args.Exchange) ? "(empty)" : args.Exchange) + ". " +
-                "RoutingKey: " + (string.IsNullOrWhiteSpace(args.RoutingKey) ? "(empty)" : args.RoutingKey) + ".";
+            string reason = GetReturnReason(in args);
 
             if (args.BasicProperties != null &&
                 args.BasicProperties.Headers != null &&
@@ -816,14 +865,6 @@ namespace DaJet.RabbitMQ
             }
 
             _tracker?.SetReturnedStatus(reason);
-
-            if (Options.Value.UseDeliveryTracking &&
-                args.BasicProperties != null &&
-                args.BasicProperties.IsAppIdPresent() &&
-                args.BasicProperties.IsMessageIdPresent())
-            {
-                _eventTracker.SetReturnedStatus(args.BasicProperties.AppId, args.BasicProperties.MessageId, reason);
-            }
         }
         private void ModelShutdownHandler(object sender, ShutdownEventArgs args)
         {
@@ -832,85 +873,8 @@ namespace DaJet.RabbitMQ
 
             if (Options.Value.UseDeliveryTracking)
             {
-                _eventTracker.SetShutdownStatus(args.ToString());
+                _eventTracker?.SetShutdownStatus(args.ToString());
             }
-        }
-
-        private void TrackSelectEvent(ulong deliveryTag, in IBasicProperties headers, ReadOnlyMemory<byte> message)
-        {
-            try
-            {
-                TryTrackSelectEvent(deliveryTag, headers, message);
-            }
-            catch (Exception error)
-            {
-                FileLogger.Log(ExceptionHelper.GetErrorText(error));
-            }
-        }
-        private void TryTrackSelectEvent(ulong deliveryTag, in IBasicProperties headers, ReadOnlyMemory<byte> message)
-        {
-            if (!Guid.TryParse(headers.MessageId, out Guid msgUid))
-            {
-                return;
-            }
-
-            string recipients = string.Empty;
-
-            foreach (var header in headers.Headers)
-            {
-                if (header.Key == "CC" && header.Value is string[] values && values != null)
-                {
-                    recipients = string.Join(",", values);
-                }
-            }
-
-            DeliveryEvent @event = new DeliveryEvent()
-            {
-                DeliveryTag = deliveryTag,
-                Source = headers.AppId ?? string.Empty,
-                MsgUid = msgUid,
-                EventNode = Options.Value.ThisNode,
-                EventType = DeliveryEventType.DBRMQ_SELECT,
-                EventData = new MessageData()
-                {
-                    Target = recipients,
-                    Type = headers.Type ?? string.Empty,
-                    Body = MessageJsonParser.ExtractEntityKey(headers.Type ?? string.Empty, message),
-                    Vector = GetHeaderVector(in headers)
-                }
-            };
-
-            _eventTracker.Track(@event);
-            _eventTracker.RegisterEvent(@event);
-        }
-        private void TrackPublishEvent(ulong deliveryTag, in IBasicProperties headers, ReadOnlyMemory<byte> message)
-        {
-            try
-            {
-                TryTrackPublishEvent(deliveryTag, headers, message);
-            }
-            catch (Exception error)
-            {
-                FileLogger.Log(ExceptionHelper.GetErrorText(error));
-            }
-        }
-        private void TryTrackPublishEvent(ulong deliveryTag, in IBasicProperties headers, ReadOnlyMemory<byte> message)
-        {
-            if (!Guid.TryParse(headers.MessageId, out Guid msgUid))
-            {
-                return;
-            }
-
-            DeliveryEvent @event = new DeliveryEvent()
-            {
-                DeliveryTag = deliveryTag,
-                Source = headers.AppId ?? string.Empty,
-                MsgUid = msgUid,
-                EventNode = Options.Value.ThisNode,
-                EventType = DeliveryEventType.DBRMQ_PUBLISH
-            };
-
-            _eventTracker.RegisterEvent(@event);
         }
     }
 }

@@ -15,4 +15,19 @@
         public static readonly string RMQDB_INSERT = "RMQDB_INSERT";
         public static readonly string RMQDB_SHUTDOWN = "RMQDB_SHUTDOWN";
     }
+    public enum DeliveryEventTypes
+    {
+        UNDEFINED,
+
+        DBRMQ_SELECT,
+        DBRMQ_PUBLISH,
+        DBRMQ_ACK,
+        DBRMQ_NACK,
+        DBRMQ_RETURN,
+        DBRMQ_SHUTDOWN,
+        
+        RMQDB_CONSUME,
+        RMQDB_INSERT,
+        RMQDB_SHUTDOWN
+    }
 }

@@ -726,22 +726,22 @@ namespace DaJet.RabbitMQ
                 return;
             }
 
-            DeliveryEvent @event = new DeliveryEvent()
-            {
-                Source = headers.AppId ?? string.Empty,
-                MsgUid = msgUid,
-                EventNode = Options.Value.ThisNode,
-                EventType = DeliveryEventType.RMQDB_CONSUME,
-                EventData = new MessageData()
-                {
-                    Target = Options.Value.ThisNode,
-                    Type = headers.Type ?? string.Empty,
-                    Body = MessageJsonParser.ExtractEntityKey(headers.Type ?? string.Empty, message),
-                    Vector = GetHeaderVector(in headers)
-                }
-            };
+            //DeliveryEvent @event = new DeliveryEvent()
+            //{
+            //    Source = headers.AppId ?? string.Empty,
+            //    MsgUid = msgUid,
+            //    EventNode = Options.Value.ThisNode,
+            //    EventType = DeliveryEventType.RMQDB_CONSUME,
+            //    EventData = new MessageData()
+            //    {
+            //        Target = Options.Value.ThisNode,
+            //        Type = headers.Type ?? string.Empty,
+            //        Body = MessageJsonParser.ExtractEntityKey(headers.Type ?? string.Empty, message),
+            //        Vector = GetHeaderVector(in headers)
+            //    }
+            //};
 
-            _eventTracker.RegisterEvent(@event);
+            //_eventTracker.RegisterEvent(@event);
         }
         private void TrackInsertEvent(in IBasicProperties headers, in ReadOnlyMemory<byte> message)
         {
@@ -761,15 +761,15 @@ namespace DaJet.RabbitMQ
                 return;
             }
 
-            DeliveryEvent @event = new DeliveryEvent()
-            {
-                Source = headers.AppId ?? string.Empty,
-                MsgUid = msgUid,
-                EventNode = Options.Value.ThisNode,
-                EventType = DeliveryEventType.RMQDB_INSERT
-            };
+            //DeliveryEvent @event = new DeliveryEvent()
+            //{
+            //    Source = headers.AppId ?? string.Empty,
+            //    MsgUid = msgUid,
+            //    EventNode = Options.Value.ThisNode,
+            //    EventType = DeliveryEventType.RMQDB_INSERT
+            //};
 
-            _eventTracker.RegisterEvent(@event);
+            //_eventTracker.RegisterEvent(@event);
         }
     }
 }

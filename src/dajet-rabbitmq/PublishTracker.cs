@@ -63,12 +63,11 @@ namespace DaJet.RabbitMQ
         }
         internal void SetMultipleStatus(ulong deliveryTag, PublishStatus status)
         {
-            foreach (var item in _tags)
+            ulong currentTag = deliveryTag;
+
+            while (currentTag > 0 && _tags.TryUpdate(currentTag, status, PublishStatus.New))
             {
-                if (item.Key <= deliveryTag)
-                {
-                    _tags[item.Key] = status;
-                }
+                --currentTag;
             }
         }
 
@@ -104,9 +103,9 @@ namespace DaJet.RabbitMQ
                 return true;
             }
 
-            foreach (var item in _tags)
+            foreach (PublishStatus status in _tags.Values)
             {
-                if (item.Value != PublishStatus.Ack)
+                if (status != PublishStatus.Ack)
                 {
                     return true;
                 }

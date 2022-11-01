@@ -39,7 +39,7 @@ namespace DaJet.RabbitMQ.Test
     {
         private const bool USE_DELIVERY_TRACKING = true;
         private const string INCOMING_QUEUE_NAME = "–егистр—ведений.¬ход€ща€ќчередь10";
-        private const string OUTGOING_QUEUE_NAME = "–егистр—ведений.»сход€ща€ќчередь11";
+        private const string OUTGOING_QUEUE_NAME = "–егистр—ведений.»сход€ща€ќчередь10";
         private const string MS_CONNECTION_STRING = "Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True;Encrypt=False;";
         private const string PG_CONNECTION_STRING = "Host=localhost;Port=5432;Database=dajet-messaging-pg;Username=postgres;Password=postgres;";
 
@@ -379,10 +379,9 @@ namespace DaJet.RabbitMQ.Test
             FileLogger.UseCatalog("C:\\temp");
             FileLogger.UseFileName("delivery-tracking");
 
-            using (MsDeliveryTracker tracker = new MsDeliveryTracker(MS_CONNECTION_STRING))
-            {
-                tracker.ProcessEvents(new DeliveryEventProcessor());
-            }
+            MsDeliveryTracker tracker = new MsDeliveryTracker(MS_CONNECTION_STRING);
+            
+            tracker.ProcessEvents(new DeliveryEventProcessor());
         }
     }
 }

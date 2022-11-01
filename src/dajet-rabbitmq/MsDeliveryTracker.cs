@@ -1,19 +1,18 @@
 ﻿using DaJet.Data;
-using DaJet.Logging;
 using DaJet.Metadata;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.SqlClient.Server;
-using System.Collections.Concurrent;
+using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Diagnostics;
-using System.Linq;
 
 namespace DaJet.RabbitMQ
 {
     public sealed class MsDeliveryTracker : DeliveryTracker
     {
         #region "SQL COMMANDS"
+
+        #region "DATABASE SCHEMA"
 
         private const string TABLE_EXISTS_COMMAND =
             "SELECT 1 FROM sys.tables WHERE name = 'delivery_tracking_events';";
@@ -42,6 +41,8 @@ namespace DaJet.RabbitMQ
             "event_node nvarchar(10) NOT NULL, " +
             "event_time datetime2 NOT NULL, " +
             "event_data nvarchar(max) NOT NULL);";
+
+        #endregion
 
         #region "INSERT centric UPSERT"
 
@@ -150,7 +151,6 @@ namespace DaJet.RabbitMQ
             new SqlMetaData("event_time", SqlDbType.DateTime2),
             new SqlMetaData("event_data", SqlDbType.NVarChar, -1)
         };
-        private readonly ConcurrentBag<SqlDataRecord> _events = new ConcurrentBag<SqlDataRecord>();
         public MsDeliveryTracker(string connectionString) : base()
         {
             _connectionString = connectionString;
@@ -173,24 +173,142 @@ namespace DaJet.RabbitMQ
                 _executor.ExecuteNonQuery(CREATE_TYPE_COMMAND, 10);
             }
         }
-        protected override void _Dispose()
-        {
-            _events.Clear();
-        }
 
-        public override void RegisterEvent(DeliveryEvent @event)
+        internal override void FlushEvents()
+        {
+            if (_events.Count == 0)
+            {
+                return;
+            }
+
+            OutMessageInfo deliveryInfo;
+            List<SqlDataRecord> records = new List<SqlDataRecord>(3000);
+
+            foreach (var item in _events)
+            {
+                deliveryInfo = item.Value;
+
+                if (deliveryInfo.EventSelect != DateTime.MinValue)
+                {
+                    records.Add(CreateSelectEvent(in deliveryInfo));
+                }
+
+                if (deliveryInfo.EventPublish != DateTime.MinValue)
+                {
+                    records.Add(CreatePublishEvent(in deliveryInfo));
+                }
+
+                if (deliveryInfo.EventConfirm != DateTime.MinValue)
+                {
+                    records.Add(CreateConfirmEvent(in deliveryInfo));
+                }
+
+                if (deliveryInfo.EventReturn != DateTime.MinValue)
+                {
+                    records.Add(CreateReturnEvent(in deliveryInfo));
+                }
+            }
+            _events.Clear();
+
+            int result = 0;
+
+            using (SqlConnection connection = new SqlConnection(_connectionString))
+            {
+                connection.Open();
+
+                using (SqlTransaction transaction = connection.BeginTransaction())
+                {
+                    using (SqlCommand command = connection.CreateCommand())
+                    {
+                        command.Transaction = transaction;
+
+                        SqlParameter parameter = command.Parameters.AddWithValue("delivery_events", records);
+                        parameter.SqlDbType = SqlDbType.Structured;
+                        parameter.TypeName = "delivery_tracking_event";
+
+                        command.CommandText = BULK_UPDATE_COMMAND;
+                        result += command.ExecuteNonQuery();
+
+                        command.CommandText = BULK_INSERT_COMMAND;
+                        result += command.ExecuteNonQuery();
+                    }
+                    transaction.Commit();
+                }
+            }
+        }
+        private SqlDataRecord CreateSelectEvent(in OutMessageInfo deliveryInfo)
         {
             SqlDataRecord record = new SqlDataRecord(_metadata);
 
-            record.SetGuid(0, @event.MsgUid);
-            record.SetString(1, @event.Source);
-            record.SetString(2, @event.EventType);
-            record.SetString(3, @event.EventNode);
-            record.SetDateTime(4, @event.EventTime);
-            record.SetString(5, @event.SerializeEventDataToJson());
+            record.SetGuid(0, deliveryInfo.MsgUid);
+            record.SetString(1, deliveryInfo.AppId);
+            record.SetString(2, DeliveryEventType.DBRMQ_SELECT);
+            record.SetString(3, deliveryInfo.EventNode);
+            record.SetDateTime(4, deliveryInfo.EventSelect);
 
-            _events.Add(record);
+            MessageData data = new MessageData()
+            {
+                Type = deliveryInfo.Type,
+                Body = deliveryInfo.Body,
+                Target = deliveryInfo.Recipients,
+                Vector = deliveryInfo.Vector
+            };
+            record.SetString(5, data.ToJson());
+
+            return record;
         }
+        private SqlDataRecord CreatePublishEvent(in OutMessageInfo deliveryInfo)
+        {
+            SqlDataRecord record = new SqlDataRecord(_metadata);
+
+            record.SetGuid(0, deliveryInfo.MsgUid);
+            record.SetString(1, deliveryInfo.AppId);
+            record.SetString(2, DeliveryEventType.DBRMQ_PUBLISH);
+            record.SetString(3, deliveryInfo.EventNode);
+            record.SetDateTime(4, deliveryInfo.EventSelect);
+            record.SetString(5, string.Empty);
+
+            return record;
+        }
+        private SqlDataRecord CreateConfirmEvent(in OutMessageInfo deliveryInfo)
+        {
+            SqlDataRecord record = new SqlDataRecord(_metadata);
+
+            record.SetGuid(0, deliveryInfo.MsgUid);
+            record.SetString(1, deliveryInfo.AppId);
+            if (deliveryInfo.EventType == DeliveryEventTypes.DBRMQ_ACK)
+            {
+                record.SetString(2, DeliveryEventType.DBRMQ_ACK);
+            }
+            else if (deliveryInfo.EventType == DeliveryEventTypes.DBRMQ_NACK)
+            {
+                record.SetString(2, DeliveryEventType.DBRMQ_NACK);
+            }
+            record.SetString(3, deliveryInfo.EventNode);
+            record.SetDateTime(4, deliveryInfo.EventConfirm);
+            record.SetString(5, string.Empty);
+
+            return record;
+        }
+        private SqlDataRecord CreateReturnEvent(in OutMessageInfo deliveryInfo)
+        {
+            SqlDataRecord record = new SqlDataRecord(_metadata);
+
+            record.SetGuid(0, deliveryInfo.MsgUid);
+            record.SetString(1, deliveryInfo.AppId);
+            record.SetString(2, DeliveryEventType.DBRMQ_RETURN);
+            record.SetString(3, deliveryInfo.EventNode);
+            record.SetDateTime(4, deliveryInfo.EventReturn);
+
+            ReturnEvent data = new ReturnEvent()
+            {
+                Reason = deliveryInfo.Body
+            };
+            record.SetString(5, data.ToJson());
+
+            return record;
+        }
+
         public override void ProcessEvents(IDeliveryEventProcessor processor)
         {
             DeliveryEvent @event = new DeliveryEvent();
@@ -225,57 +343,6 @@ namespace DaJet.RabbitMQ
                     transaction.Commit();
                 }
             }
-        }
-        public override void RegisterSuccess()
-        {
-            if (_events.Count == 0)
-            {
-                FileLogger.Log($"[0] Delivery SUCCESS {_events.Count}");
-                return;
-            }
-
-            int result = 0;
-
-            Stopwatch watch = new Stopwatch();
-
-            watch.Start();
-
-            using (SqlConnection connection = new SqlConnection(_connectionString))
-            {
-                connection.Open();
-
-                using (SqlTransaction transaction = connection.BeginTransaction())
-                {
-                    using (SqlCommand command = connection.CreateCommand())
-                    {
-                        command.Transaction = transaction;
-                        
-                        SqlParameter parameter = command.Parameters.AddWithValue("delivery_events", _events);
-                        parameter.SqlDbType = SqlDbType.Structured;
-                        parameter.TypeName = "delivery_tracking_event";
-
-                        command.CommandText = BULK_UPDATE_COMMAND; //BULK_INSERT_COMMAND;
-                        result += command.ExecuteNonQuery();
-
-                        command.CommandText = BULK_INSERT_COMMAND;
-                        result += command.ExecuteNonQuery();
-
-                        //using (SqlDataReader reader = command.ExecuteReader())
-                        //{
-                        //    if (reader.Read())
-                        //    {
-
-                        //    }
-                        //    reader.Close();
-                        //}
-                    }
-                    transaction.Commit();
-                }
-            }
-
-            watch.Stop();
-
-            FileLogger.Log($"[{result}] Delivery SUCCESS {_events.Count} in {watch.ElapsedMilliseconds} ms");
         }
     }
 }
