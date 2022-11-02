@@ -6,38 +6,21 @@ using DaJet.Logging;
 using DaJet.Metadata;
 using DaJet.Metadata.Model;
 using Microsoft.Extensions.Options;
-using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using RabbitMQ.Client;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
-using System.Runtime;
 using System.Threading;
 using System.Timers;
 
 namespace DaJet.RabbitMQ.Test
 {
-    public sealed class DeliveryEventProcessor : IDeliveryEventProcessor
-    {
-        public void Process(DeliveryEvent @event)
-        {
-            Console.WriteLine("***");
-            Console.WriteLine();
-
-            foreach (PropertyInfo property in typeof(DeliveryEvent).GetProperties())
-            {
-                object value = property.GetValue(@event, null);
-                Console.WriteLine($"{property.Name} = {value}");
-            }
-        }
-    }
-
     [TestClass] public class UsageTests
     {
         private const bool USE_DELIVERY_TRACKING = true;
+        private const string DELIVERY_TRACKING_QUEUE = "dajet-agent-monitor";
         private const string INCOMING_QUEUE_NAME = "–егистр—ведений.¬ход€ща€ќчередь10";
         private const string OUTGOING_QUEUE_NAME = "–егистр—ведений.»сход€ща€ќчередь10";
         private const string MS_CONNECTION_STRING = "Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True;Encrypt=False;";
@@ -297,32 +280,9 @@ namespace DaJet.RabbitMQ.Test
 
             return messages;
         }
-        [TestMethod] public void DeliveryTracker_Consume()
-        {
-            string uri = "amqp://guest:guest@localhost:5672/%2F";
 
-            FileLogger.UseCatalog("C:\\temp");
-            FileLogger.UseFileName("delivery-tracking");
 
-            _options = Options.Create(new RmqConsumerOptions()
-            {
-                ThisNode = "N001",
-                Heartbeat = 10,
-                UseDeliveryTracking = USE_DELIVERY_TRACKING,
-                Queues = new List<string>() { "dajet-queue" }
-            });
-
-            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-
-            using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri))
-            {
-                consumer.Configure(_options);
-
-                consumer.Initialize(DatabaseProvider.SQLServer, MS_CONNECTION_STRING, INCOMING_QUEUE_NAME);
-
-                consumer.Consume(stop.Token, FileLogger.Log);
-            }
-        }
+        
         [TestMethod] public void DeliveryTracker_RegisterEvents()
         {
             FileLogger.UseCatalog("C:\\temp");
@@ -349,6 +309,8 @@ namespace DaJet.RabbitMQ.Test
             IOptions<RmqProducerOptions> options = Options.Create(new RmqProducerOptions()
             {
                 ThisNode = "MAIN",
+                Provider = DatabaseProvider.SQLServer,
+                ConnectionString = MS_CONNECTION_STRING,
                 UseDeliveryTracking = USE_DELIVERY_TRACKING
             });
 
@@ -379,9 +341,56 @@ namespace DaJet.RabbitMQ.Test
             FileLogger.UseCatalog("C:\\temp");
             FileLogger.UseFileName("delivery-tracking");
 
-            MsDeliveryTracker tracker = new MsDeliveryTracker(MS_CONNECTION_STRING);
-            
-            tracker.ProcessEvents(new DeliveryEventProcessor());
+            string uri = "amqp://guest:guest@localhost:5672/%2F";
+
+            IOptions<RmqProducerOptions> options = Options.Create(new RmqProducerOptions()
+            {
+                ThisNode = "MAIN",
+                Provider = DatabaseProvider.SQLServer,
+                ConnectionString = MS_CONNECTION_STRING,
+                UseDeliveryTracking = USE_DELIVERY_TRACKING
+            });
+
+            int published;
+
+            Stopwatch watch = new Stopwatch();
+            watch.Start();
+
+            using (RmqMessageProducer producer = new RmqMessageProducer(uri, DELIVERY_TRACKING_QUEUE))
+            {
+                producer.Configure(options);
+                producer.Initialize();
+                published = producer.PublishDeliveryTrackingEvents();
+            }
+
+            watch.Stop();
+            Console.WriteLine($"Published {published} events in {watch.ElapsedMilliseconds} ms");
+        }
+        [TestMethod] public void DeliveryTracker_Consume()
+        {
+            string uri = "amqp://guest:guest@localhost:5672/%2F";
+
+            FileLogger.UseCatalog("C:\\temp");
+            FileLogger.UseFileName("delivery-tracking");
+
+            _options = Options.Create(new RmqConsumerOptions()
+            {
+                ThisNode = "N001",
+                Heartbeat = 10,
+                UseDeliveryTracking = false, //USE_DELIVERY_TRACKING,
+                Queues = new List<string>() { "dajet-queue" }
+            });
+
+            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
+            using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri))
+            {
+                consumer.Configure(_options);
+
+                consumer.Initialize(DatabaseProvider.SQLServer, MS_CONNECTION_STRING, INCOMING_QUEUE_NAME);
+
+                consumer.Consume(stop.Token, FileLogger.Log);
+            }
         }
     }
 }

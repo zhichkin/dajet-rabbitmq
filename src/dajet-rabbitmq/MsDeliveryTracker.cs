@@ -5,6 +5,7 @@ using Microsoft.Data.SqlClient.Server;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Text;
 
 namespace DaJet.RabbitMQ
 {
@@ -140,6 +141,7 @@ namespace DaJet.RabbitMQ
 
         #endregion
 
+        private readonly StringBuilder _data = new StringBuilder(1024);
         private readonly QueryExecutor _executor;
         private readonly string _connectionString;
         private readonly SqlMetaData[] _metadata = new SqlMetaData[]
@@ -156,6 +158,7 @@ namespace DaJet.RabbitMQ
             _connectionString = connectionString;
             _executor = new QueryExecutor(DatabaseProvider.SQLServer, in _connectionString);
         }
+        
         public override void ConfigureDatabase()
         {
             if (_executor.ExecuteScalar<int>(TABLE_EXISTS_COMMAND, 10) != 1)
@@ -245,15 +248,16 @@ namespace DaJet.RabbitMQ
             record.SetString(2, DeliveryEventType.DBRMQ_SELECT);
             record.SetString(3, deliveryInfo.EventNode);
             record.SetDateTime(4, deliveryInfo.EventSelect);
+            //record.SetString(5, string.Empty);
 
-            MessageData data = new MessageData()
-            {
-                Type = deliveryInfo.Type,
-                Body = deliveryInfo.Body,
-                Target = deliveryInfo.Recipients,
-                Vector = deliveryInfo.Vector
-            };
-            record.SetString(5, data.ToJson());
+            _data.Clear()
+                .Append("{\"type\":\"").Append(deliveryInfo.Type)
+                .Append("\",\"body\":\"").Append(deliveryInfo.Body)
+                .Append("\",\"vector\":\"").Append(deliveryInfo.Vector)
+                .Append("\",\"target\":\"").Append(deliveryInfo.Recipients)
+                .Append("\"}");
+
+            record.SetString(5, _data.ToString());
 
             return record;
         }
@@ -309,10 +313,57 @@ namespace DaJet.RabbitMQ
             return record;
         }
 
-        public override void ProcessEvents(IDeliveryEventProcessor processor)
+        public override void RegisterEvent(DeliveryEvent @event)
+        {
+            using (SqlConnection connection = new SqlConnection(_connectionString))
+            {
+                connection.Open();
+
+                SqlCommand command = connection.CreateCommand();
+                SqlTransaction transaction = connection.BeginTransaction();
+
+                command.Connection = connection;
+                command.Transaction = transaction;
+
+                command.Parameters.AddWithValue("msguid", @event.MsgUid);
+                command.Parameters.AddWithValue("source", @event.Source);
+                command.Parameters.AddWithValue("event_type", @event.EventType);
+                command.Parameters.AddWithValue("event_node", @event.EventNode);
+                command.Parameters.AddWithValue("event_time", @event.EventTime);
+                command.Parameters.AddWithValue("event_data", @event.SerializeEventDataToJson());
+
+                try
+                {
+                    command.CommandText = UPSERT_INSERT_COMMAND;
+                    int recordsAffected = command.ExecuteNonQuery();
+                    if (recordsAffected == 0)
+                    {
+                        command.CommandText = UPSERT_UPDATE_COMMAND;
+                        _ = command.ExecuteNonQuery();
+                    }
+                    transaction.Commit();
+                }
+                catch (Exception error)
+                {
+                    try
+                    {
+                        transaction.Rollback();
+                    }
+                    catch
+                    {
+                        // do nothing
+                    }
+                    throw error;
+                }
+            }
+        }
+
+        public override int ProcessEvents(IDeliveryEventProcessor processor)
         {
             DeliveryEvent @event = new DeliveryEvent();
 
+            int consumed = 0;
+            
             using (SqlConnection connection = new SqlConnection(_connectionString))
             {
                 connection.Open();
@@ -328,6 +379,8 @@ namespace DaJet.RabbitMQ
                         {
                             while (reader.Read())
                             {
+                                consumed++;
+
                                 @event.MsgUid = reader.GetGuid(0);
                                 @event.Source = reader.GetString(1);
                                 @event.EventType = reader.GetString(2);
@@ -340,9 +393,13 @@ namespace DaJet.RabbitMQ
                             reader.Close();
                         }
                     }
+                    processor.Synchronize();
+                    
                     transaction.Commit();
                 }
             }
+
+            return consumed;
         }
     }
 }

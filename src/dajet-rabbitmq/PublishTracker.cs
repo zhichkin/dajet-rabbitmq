@@ -10,7 +10,7 @@ namespace DaJet.RabbitMQ
         private long _shutdown = 0L;
         private string _reason = string.Empty;
 
-        private readonly ConcurrentDictionary<ulong, PublishStatus> _tags = new ConcurrentDictionary<ulong, PublishStatus>();
+        private readonly ConcurrentDictionary<ulong, PublishStatus> _tags = new ConcurrentDictionary<ulong, PublishStatus>(1, 1000);
 
         internal PublishTracker() { }
 

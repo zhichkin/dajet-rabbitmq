@@ -29,8 +29,7 @@ namespace DaJet.RabbitMQ
 
         private IConnection Connection;
         private readonly ConcurrentDictionary<string, EventingBasicConsumer> Consumers = new ConcurrentDictionary<string, EventingBasicConsumer>();
-        private DeliveryTracker _eventTracker;
-
+        
         public string HostName { get; private set; } = "localhost";
         public int HostPort { get; private set; } = 5672;
         public string VirtualHost { get; private set; } = "/";
@@ -86,13 +85,25 @@ namespace DaJet.RabbitMQ
         private ConsumerLogger _consumerLogger;
         private IDaJetVectorService _vectorService;
 
+        private bool _useDeliveryTracking = false;
+        private DeliveryTracker _eventTracker; // message delivery tracking service
+        private DeliveryTracker CreateDeliveryTracker()
+        {
+            if (_provider == DatabaseProvider.SQLServer)
+            {
+                return new MsDeliveryTracker(_connectionString);
+            }
+
+            // TODO: PostgreSql provider
+            return null;
+        }
+
         public IOptions<RmqConsumerOptions> Options { get; private set; }
         public void Configure(IOptions<RmqConsumerOptions> options)
         {
             Options = options;
 
-            _eventTracker = new MsDeliveryTracker("Data Source=zhichkin;Initial Catalog=dajet-messaging-ms;Integrated Security=True;Encrypt=False;");
-            _eventTracker.ConfigureDatabase();
+            _useDeliveryTracking = Options.Value.UseDeliveryTracking;
 
             if (Options.Value.UseVectorService && !string.IsNullOrWhiteSpace(Options.Value.VectorDatabase))
             {
@@ -116,6 +127,11 @@ namespace DaJet.RabbitMQ
             _provider = provider;
             _connectionString = connectionString;
             _metadataName = metadataName;
+
+            if (_useDeliveryTracking)
+            {
+                _eventTracker = CreateDeliveryTracker();
+            }
         }
         private void InitializeMetadata()
         {
@@ -382,22 +398,22 @@ namespace DaJet.RabbitMQ
                 LogMessageDelivery(in args);
             }
 
-            if (Options.Value.UseDeliveryTracking)
-            {
-                TrackConsumeEvent(args.BasicProperties, args.Body);
-            }
-
             bool success = true;
 
             try
             {
+                if (_useDeliveryTracking)
+                {
+                    TrackConsumeEvent(args.BasicProperties, args.Body);
+                }
+
                 using (IMessageProducer producer = GetMessageProducer())
                 {
                     IncomingMessageDataMapper message = ProduceMessage(in args);
 
                     producer.Insert(in message);
 
-                    if (Options.Value.UseDeliveryTracking)
+                    if (_useDeliveryTracking)
                     {
                         TrackInsertEvent(args.BasicProperties, args.Body);
                     }
@@ -710,66 +726,44 @@ namespace DaJet.RabbitMQ
 
         private void TrackConsumeEvent(in IBasicProperties headers, in ReadOnlyMemory<byte> message)
         {
-            try
-            {
-                TryTrackConsumeEvent(in headers, message);
-            }
-            catch (Exception error)
-            {
-                FileLogger.Log(ExceptionHelper.GetErrorText(error));
-            }
-        }
-        private void TryTrackConsumeEvent(in IBasicProperties headers, in ReadOnlyMemory<byte> message)
-        {
             if (!Guid.TryParse(headers.MessageId, out Guid msgUid))
             {
                 return;
             }
 
-            //DeliveryEvent @event = new DeliveryEvent()
-            //{
-            //    Source = headers.AppId ?? string.Empty,
-            //    MsgUid = msgUid,
-            //    EventNode = Options.Value.ThisNode,
-            //    EventType = DeliveryEventType.RMQDB_CONSUME,
-            //    EventData = new MessageData()
-            //    {
-            //        Target = Options.Value.ThisNode,
-            //        Type = headers.Type ?? string.Empty,
-            //        Body = MessageJsonParser.ExtractEntityKey(headers.Type ?? string.Empty, message),
-            //        Vector = GetHeaderVector(in headers)
-            //    }
-            //};
+            DeliveryEvent @event = new DeliveryEvent()
+            {
+                Source = headers.AppId ?? string.Empty,
+                MsgUid = msgUid,
+                EventNode = Options.Value.ThisNode,
+                EventType = DeliveryEventType.RMQDB_CONSUME,
+                EventData = new MessageData()
+                {
+                    Target = Options.Value.ThisNode,
+                    Type = headers.Type ?? string.Empty,
+                    Body = MessageJsonParser.ExtractEntityKey(headers.Type ?? string.Empty, message),
+                    Vector = GetHeaderVector(in headers)
+                }
+            };
 
-            //_eventTracker.RegisterEvent(@event);
+            _eventTracker?.RegisterEvent(@event);
         }
         private void TrackInsertEvent(in IBasicProperties headers, in ReadOnlyMemory<byte> message)
         {
-            try
-            {
-                TryTrackInsertEvent(in headers, message);
-            }
-            catch (Exception error)
-            {
-                FileLogger.Log(ExceptionHelper.GetErrorText(error));
-            }
-        }
-        private void TryTrackInsertEvent(in IBasicProperties headers, in ReadOnlyMemory<byte> message)
-        {
             if (!Guid.TryParse(headers.MessageId, out Guid msgUid))
             {
                 return;
             }
 
-            //DeliveryEvent @event = new DeliveryEvent()
-            //{
-            //    Source = headers.AppId ?? string.Empty,
-            //    MsgUid = msgUid,
-            //    EventNode = Options.Value.ThisNode,
-            //    EventType = DeliveryEventType.RMQDB_INSERT
-            //};
+            DeliveryEvent @event = new DeliveryEvent()
+            {
+                Source = headers.AppId ?? string.Empty,
+                MsgUid = msgUid,
+                EventNode = Options.Value.ThisNode,
+                EventType = DeliveryEventType.RMQDB_INSERT
+            };
 
-            //_eventTracker.RegisterEvent(@event);
+            _eventTracker?.RegisterEvent(@event);
         }
     }
 }

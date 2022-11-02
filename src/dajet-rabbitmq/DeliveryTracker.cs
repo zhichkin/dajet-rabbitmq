@@ -7,6 +7,7 @@ namespace DaJet.RabbitMQ
     public interface IDeliveryEventProcessor
     {
         void Process(DeliveryEvent @event);
+        void Synchronize();
     }
     public abstract class DeliveryTracker
     {
@@ -16,7 +17,8 @@ namespace DaJet.RabbitMQ
 
         protected DeliveryTracker() { }
         public abstract void ConfigureDatabase();
-        public abstract void ProcessEvents(IDeliveryEventProcessor processor);
+        public abstract void RegisterEvent(DeliveryEvent @event);
+        public abstract int ProcessEvents(IDeliveryEventProcessor processor);
         internal abstract void FlushEvents();
         internal void ClearEvents() { _events.Clear(); }
         
