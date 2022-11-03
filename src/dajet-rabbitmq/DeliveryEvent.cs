@@ -1,4 +1,5 @@
-﻿using System;
+﻿using NpgsqlTypes;
+using System;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -21,10 +22,31 @@ namespace DaJet.RabbitMQ
         public DateTime EventConfirm { get; set; } = DateTime.MinValue;
         public DateTime EventReturn { get; set; } = DateTime.MinValue;
     }
+    public sealed class PgDeliveryEvent
+    {
+        [PgName("msguid")] public Guid MsgUid { get; set; } = Guid.Empty;
+        [PgName("source")] public string Source { get; set; } = string.Empty;
+        [PgName("event_node")] public string EventNode { get; set; } = string.Empty;
+        [PgName("event_time")] public DateTime EventTime { get; set; } = DateTime.UtcNow;
+        [PgName("event_type")] public string EventType { get; set; } = DeliveryEventType.UNDEFINED;
+        [PgName("event_data")] public string EventData { get; set; } = string.Empty;
+        public string SerializeEventDataToJson()
+        {
+            if (EventData is null)
+            {
+                return string.Empty;
+            }
+
+            return JsonSerializer.Serialize(EventData, EventData.GetType(),
+                new JsonSerializerOptions()
+                {
+                    WriteIndented = false,
+                    Encoder = JavaScriptEncoder.Create(UnicodeRanges.All)
+                });
+        }
+    }
     public sealed class DeliveryEvent
     {
-        [JsonIgnore] public bool Delivered { get; set; } = false;
-        [JsonIgnore] public ulong DeliveryTag { get; set; } = ulong.MinValue;
         [JsonPropertyName("msguid")] public Guid MsgUid { get; set; } = Guid.Empty;
         [JsonPropertyName("source")] public string Source { get; set; } = string.Empty;
         [JsonPropertyName("node")] public string EventNode { get; set; } = string.Empty;

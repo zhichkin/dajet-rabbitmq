@@ -184,13 +184,10 @@ namespace DaJet.RabbitMQ
                 return;
             }
 
-            OutMessageInfo deliveryInfo;
-            List<SqlDataRecord> records = new List<SqlDataRecord>(3000);
+            List<SqlDataRecord> records = new List<SqlDataRecord>(_events.Count * 3);
 
-            foreach (var item in _events)
+            foreach (OutMessageInfo deliveryInfo in _events.Values)
             {
-                deliveryInfo = item.Value;
-
                 if (deliveryInfo.EventSelect != DateTime.MinValue)
                 {
                     records.Add(CreateSelectEvent(in deliveryInfo));
@@ -269,7 +266,7 @@ namespace DaJet.RabbitMQ
             record.SetString(1, deliveryInfo.AppId);
             record.SetString(2, DeliveryEventType.DBRMQ_PUBLISH);
             record.SetString(3, deliveryInfo.EventNode);
-            record.SetDateTime(4, deliveryInfo.EventSelect);
+            record.SetDateTime(4, deliveryInfo.EventPublish);
             record.SetString(5, string.Empty);
 
             return record;

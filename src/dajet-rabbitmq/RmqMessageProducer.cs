@@ -70,8 +70,10 @@ namespace DaJet.RabbitMQ
             {
                 return new MsDeliveryTracker(Options.Value.ConnectionString);
             }
-
-            // TODO: PostgreSql provider
+            else if (Options.Value.Provider == DatabaseProvider.PostgreSQL)
+            {
+                return new PgDeliveryTracker(Options.Value.ConnectionString);
+            }
             return null;
         }
         public void Configure(IOptions<RmqProducerOptions> options)

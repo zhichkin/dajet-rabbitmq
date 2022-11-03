@@ -392,5 +392,125 @@ namespace DaJet.RabbitMQ.Test
                 consumer.Consume(stop.Token, FileLogger.Log);
             }
         }
+
+
+
+        [TestMethod] public void PG_DeliveryTracking_ConfigureDatabase()
+        {
+            DeliveryTracker tracker = new PgDeliveryTracker(PG_CONNECTION_STRING);
+
+            tracker.ConfigureDatabase();
+
+            Console.WriteLine("SUCCESS");
+        }
+        [TestMethod] public void PG_DeliveryTracker_RegisterEvents()
+        {
+            FileLogger.UseCatalog("C:\\temp");
+            FileLogger.UseFileName("delivery-tracking");
+
+            if (!new MetadataService()
+                .UseConnectionString(PG_CONNECTION_STRING)
+                .UseDatabaseProvider(DatabaseProvider.PostgreSQL)
+                .TryOpenInfoBase(out InfoBase infoBase, out string error))
+            {
+                Console.WriteLine(error);
+                return;
+            }
+
+            ApplicationObject queue = infoBase.GetApplicationObjectByName(OUTGOING_QUEUE_NAME);
+            if (queue == null)
+            {
+                Console.WriteLine($"Объект метаданных \"{OUTGOING_QUEUE_NAME}\" не найден.");
+                return;
+            }
+
+            string uri = "amqp://guest:guest@localhost:5672/%2F";
+
+            IOptions<RmqProducerOptions> options = Options.Create(new RmqProducerOptions()
+            {
+                ThisNode = "MAIN",
+                Provider = DatabaseProvider.PostgreSQL,
+                ConnectionString = PG_CONNECTION_STRING,
+                UseDeliveryTracking = USE_DELIVERY_TRACKING
+            });
+
+            Stopwatch watch = new Stopwatch();
+
+            watch.Start();
+
+            using (IMessageConsumer consumer = new PgMessageConsumer(PG_CONNECTION_STRING, in queue))
+            {
+                using (RmqMessageProducer producer = new RmqMessageProducer(uri, "dajet-queue")) // dajet-queue-not-found
+                {
+                    producer.Configure(options);
+
+                    producer.Initialize(ExchangeRoles.Dispatcher);
+
+                    int published = producer.Publish(consumer);
+
+                    Console.WriteLine($"Produced {published} messages.");
+                }
+            }
+
+            watch.Stop();
+
+            Console.WriteLine($"USE DELIVERY TRACKING [{USE_DELIVERY_TRACKING}] = {watch.ElapsedMilliseconds} ms");
+        }
+        [TestMethod] public void PG_DeliveryTracker_ProcessEvents()
+        {
+            FileLogger.UseCatalog("C:\\temp");
+            FileLogger.UseFileName("delivery-tracking");
+
+            string uri = "amqp://guest:guest@localhost:5672/%2F";
+
+            IOptions<RmqProducerOptions> options = Options.Create(new RmqProducerOptions()
+            {
+                ThisNode = "MAIN",
+                Provider = DatabaseProvider.PostgreSQL,
+                ConnectionString = PG_CONNECTION_STRING,
+                UseDeliveryTracking = USE_DELIVERY_TRACKING
+            });
+
+            int published;
+
+            Stopwatch watch = new Stopwatch();
+            watch.Start();
+
+            using (RmqMessageProducer producer = new RmqMessageProducer(uri, DELIVERY_TRACKING_QUEUE))
+            {
+                producer.Configure(options);
+                producer.Initialize();
+                published = producer.PublishDeliveryTrackingEvents();
+            }
+
+            watch.Stop();
+            Console.WriteLine($"Published {published} events in {watch.ElapsedMilliseconds} ms");
+        }
+        [TestMethod] public void PG_DeliveryTracker_Consume()
+        {
+            string uri = "amqp://guest:guest@localhost:5672/%2F";
+
+            FileLogger.UseCatalog("C:\\temp");
+            FileLogger.UseFileName("delivery-tracking");
+
+            _options = Options.Create(new RmqConsumerOptions()
+            {
+                ThisNode = "N001",
+                Heartbeat = 10,
+                UseDeliveryTracking = USE_DELIVERY_TRACKING,
+                Queues = new List<string>() { "dajet-queue" }
+            });
+
+            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
+            using (RmqMessageConsumer consumer = new RmqMessageConsumer(uri))
+            {
+                consumer.Configure(_options);
+
+                consumer.Initialize(DatabaseProvider.PostgreSQL, PG_CONNECTION_STRING, INCOMING_QUEUE_NAME);
+
+                consumer.Consume(stop.Token, FileLogger.Log);
+            }
+        }
     }
 }
