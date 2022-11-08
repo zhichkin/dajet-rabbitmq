@@ -282,8 +282,15 @@ namespace DaJet.RabbitMQ.Test
         }
 
 
-        
-        [TestMethod] public void DeliveryTracker_RegisterEvents()
+        [TestMethod] public void MS_DeliveryTracking_ConfigureDatabase()
+        {
+            DeliveryTracker tracker = new MsDeliveryTracker(MS_CONNECTION_STRING);
+
+            tracker.ConfigureDatabase();
+
+            Console.WriteLine("SUCCESS");
+        }
+        [TestMethod] public void MS_DeliveryTracker_RegisterEvents()
         {
             FileLogger.UseCatalog("C:\\temp");
             FileLogger.UseFileName("delivery-tracking");
@@ -336,7 +343,7 @@ namespace DaJet.RabbitMQ.Test
 
             Console.WriteLine($"USE DELIVERY TRACKING [{USE_DELIVERY_TRACKING}] = {watch.ElapsedMilliseconds} ms");
         }
-        [TestMethod] public void DeliveryTracker_ProcessEvents()
+        [TestMethod] public void MS_DeliveryTracker_ProcessEvents()
         {
             FileLogger.UseCatalog("C:\\temp");
             FileLogger.UseFileName("delivery-tracking");
@@ -368,7 +375,7 @@ namespace DaJet.RabbitMQ.Test
             watch.Stop();
             Console.WriteLine($"Published {published} events in {watch.ElapsedMilliseconds} ms");
         }
-        [TestMethod] public void DeliveryTracker_Consume()
+        [TestMethod] public void MS_DeliveryTracker_Consume()
         {
             string uri = "amqp://guest:guest@localhost:5672/%2F";
 
