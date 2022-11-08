@@ -351,6 +351,8 @@ namespace DaJet.RabbitMQ.Test
                 UseDeliveryTracking = USE_DELIVERY_TRACKING
             });
 
+            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
             int published;
 
             Stopwatch watch = new Stopwatch();
@@ -360,7 +362,7 @@ namespace DaJet.RabbitMQ.Test
             {
                 producer.Configure(options);
                 producer.Initialize();
-                published = producer.PublishDeliveryTrackingEvents();
+                published = producer.PublishDeliveryTrackingEvents(stop.Token);
             }
 
             watch.Stop();
@@ -471,6 +473,8 @@ namespace DaJet.RabbitMQ.Test
                 UseDeliveryTracking = USE_DELIVERY_TRACKING
             });
 
+            CancellationTokenSource stop = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
             int published;
 
             Stopwatch watch = new Stopwatch();
@@ -480,7 +484,7 @@ namespace DaJet.RabbitMQ.Test
             {
                 producer.Configure(options);
                 producer.Initialize();
-                published = producer.PublishDeliveryTrackingEvents();
+                published = producer.PublishDeliveryTrackingEvents(stop.Token);
             }
 
             watch.Stop();

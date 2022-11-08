@@ -13,6 +13,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Unicode;
+using System.Threading;
 using System.Web;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
 using V1 = DaJet.Data.Messaging.V1;
@@ -929,7 +930,7 @@ namespace DaJet.RabbitMQ
 
         #region "PUBLISH DELIVERY TRACKING EVENTS"
 
-        public int PublishDeliveryTrackingEvents()
+        public int PublishDeliveryTrackingEvents(CancellationToken cancellationToken)
         {
             int consumed;
             int published = 0;
@@ -942,7 +943,7 @@ namespace DaJet.RabbitMQ
 
                 published += consumed;
             }
-            while (consumed > 0);
+            while (consumed > 0 && !cancellationToken.IsCancellationRequested);
 
             return published;
         }
