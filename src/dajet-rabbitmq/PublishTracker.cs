@@ -1,4 +1,6 @@
-﻿using System.Collections.Concurrent;
+﻿using DaJet.Logging;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading;
 
 namespace DaJet.RabbitMQ
@@ -6,9 +8,12 @@ namespace DaJet.RabbitMQ
     public enum PublishStatus { New, Ack, Nack }
     internal sealed class PublishTracker
     {
+        private long _nack = 0L;
         private long _returned = 0L;
         private long _shutdown = 0L;
         private string _reason = string.Empty;
+
+        private readonly object _lock = new object();
 
         private readonly ConcurrentDictionary<ulong, PublishStatus> _tags = new ConcurrentDictionary<ulong, PublishStatus>(1, 1000);
 
@@ -20,7 +25,10 @@ namespace DaJet.RabbitMQ
         }
         internal void Clear()
         {
-            _tags.Clear();
+            lock (_lock)
+            {
+                _tags.Clear();
+            }
         }
 
         internal void SetAckStatus(ulong deliveryTag, bool multiple)
@@ -55,22 +63,69 @@ namespace DaJet.RabbitMQ
         {
             Interlocked.Increment(ref _shutdown);
 
+            Clear();
+
             _reason = reason;
         }
         internal void SetSingleStatus(ulong deliveryTag, PublishStatus status)
         {
-            _tags[deliveryTag] = status;
+            if (IsNacked || IsShutdown)
+            {
+                return;
+            }
+
+            if (status == PublishStatus.Ack)
+            {
+                lock (_lock)
+                {
+                    _ = _tags.TryRemove(deliveryTag, out _);
+                }
+            }
+            else if (status == PublishStatus.Nack)
+            {
+                Interlocked.Increment(ref _nack); Clear();
+            }
         }
         internal void SetMultipleStatus(ulong deliveryTag, PublishStatus status)
         {
-            ulong currentTag = deliveryTag;
-
-            while (currentTag > 0 && _tags.TryUpdate(currentTag, status, PublishStatus.New))
+            if (IsNacked || IsShutdown)
             {
-                --currentTag;
+                return;
+            }
+
+            if (status == PublishStatus.Ack)
+            {
+                lock (_lock)
+                {
+                    List<ulong> remove = new List<ulong>();
+
+                    foreach (var item in _tags)
+                    {
+                        if (item.Key <= deliveryTag)
+                        {
+                            remove.Add(item.Key);
+                        }
+                    }
+
+                    foreach (ulong key in remove)
+                    {
+                        _ = _tags.TryRemove(key, out _);
+                    }
+                }
+            }
+            else if (status == PublishStatus.Nack)
+            {
+                Interlocked.Increment(ref _nack); Clear();
             }
         }
 
+        internal bool IsNacked
+        {
+            get
+            {
+                return (Interlocked.Read(ref _nack) > 0);
+            }
+        }
         internal bool IsReturned
         {
             get
@@ -89,7 +144,7 @@ namespace DaJet.RabbitMQ
         {
             get
             {
-                if (string.IsNullOrEmpty(_reason))
+                if (string.IsNullOrWhiteSpace(_reason))
                 {
                     _reason = "Some messages were nacked.";
                 }
@@ -98,17 +153,15 @@ namespace DaJet.RabbitMQ
         }
         internal bool HasErrors()
         {
-            if (IsShutdown) // IsReturned
+            if (IsShutdown || IsNacked)
             {
                 return true;
             }
 
-            foreach (PublishStatus status in _tags.Values)
+            if (_tags.Count > 0)
             {
-                if (status != PublishStatus.Ack)
-                {
-                    return true;
-                }
+                FileLogger.Log("[PublishTracker] Unexpected publish error.");
+                return true;
             }
 
             return false;

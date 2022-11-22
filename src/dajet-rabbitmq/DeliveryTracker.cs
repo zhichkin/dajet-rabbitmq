@@ -64,22 +64,21 @@ namespace DaJet.RabbitMQ
         }
         private void SetMultipleStatus(ulong deliveryTag, DeliveryEventTypes eventType)
         {
-            ulong currentTag = deliveryTag;
-            
-            OutMessageInfo info = _events[currentTag];
-            
-            do
-            {
-                info.EventType = eventType;
-                info.EventConfirm = DateTime.UtcNow;
+            OutMessageInfo info;
 
-                if (currentTag > 1)
+            foreach (var item in _events)
+            {
+                if (item.Key <= deliveryTag)
                 {
-                    currentTag--;
-                    info = _events[currentTag];
+                    info = item.Value;
+
+                    if (info.EventConfirm == DateTime.MinValue)
+                    {
+                        info.EventType = eventType;
+                        info.EventConfirm = DateTime.UtcNow;
+                    }
                 }
             }
-            while (info.EventConfirm == DateTime.MinValue);
         }
         internal void SetReturnStatus(string messageId, string reason)
         {
@@ -103,42 +102,6 @@ namespace DaJet.RabbitMQ
             Interlocked.Increment(ref _shutdown);
 
             _reason = reason;
-        }
-
-        internal bool IsShutdown
-        {
-            get
-            {
-                return (Interlocked.Read(ref _shutdown) > 0);
-            }
-        }
-        internal string ShutdownReason
-        {
-            get
-            {
-                if (string.IsNullOrEmpty(_reason))
-                {
-                    _reason = "Shutdown reason is unknown.";
-                }
-                return _reason;
-            }
-        }
-        internal bool HasErrors()
-        {
-            if (IsShutdown)
-            {
-                return true;
-            }
-
-            foreach (OutMessageInfo info in _events.Values)
-            {
-                if (info.EventType != DeliveryEventTypes.DBRMQ_ACK)
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
     }
 }

@@ -2,6 +2,7 @@
 using DaJet.Json;
 using DaJet.Logging;
 using DaJet.Metadata;
+using DaJet.Metadata.Model;
 using DaJet.Vector;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
@@ -144,6 +145,14 @@ namespace DaJet.RabbitMQ
                 if (uri.Segments.Length == 3)
                 {
                     ExchangeName = HttpUtility.UrlDecode(uri.Segments[2].TrimEnd('/'), Encoding.UTF8);
+                }
+            }
+
+            if (uri.Segments != null && uri.Segments.Length == 2)
+            {
+                if (uri.Segments.Length > 1)
+                {
+                    VirtualHost = HttpUtility.UrlDecode(uri.Segments[1].TrimEnd('/'), Encoding.UTF8);
                 }
             }
         }
@@ -402,7 +411,7 @@ namespace DaJet.RabbitMQ
 
                 if (_tracker.HasErrors())
                 {
-                    throw new Exception("Delivery failure");
+                    throw new Exception($"Publish error: {_tracker.ErrorReason}");
                 }
 
                 if (_useDeliveryTracking)
@@ -987,7 +996,7 @@ namespace DaJet.RabbitMQ
 
             if (_tracker.HasErrors())
             {
-                throw new Exception("[DeliveryTracking] Delivery failure");
+                throw new Exception($"[DeliveryTracking] Error: {_tracker.ErrorReason}");
             }
 
             _tracker.Clear();
