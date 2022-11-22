@@ -1,4 +1,5 @@
-﻿using DaJet.Data.Messaging;
+﻿using DaJet.Data;
+using DaJet.Data.Messaging;
 using DaJet.Logging;
 using DaJet.Metadata;
 using DaJet.Metadata.Model;
@@ -509,12 +510,11 @@ namespace DaJet.RabbitMQ
         {
             V10.IncomingMessage message = IncomingMessageDataMapper.Create(_version) as V10.IncomingMessage;
 
-            Guid messageUid = Guid.Empty;
+            Guid messageUid = Guid.NewGuid();
 
-            if (!string.IsNullOrEmpty(args.BasicProperties.MessageId) &&
-                !Guid.TryParse(args.BasicProperties.MessageId, out messageUid))
+            if (!string.IsNullOrWhiteSpace(args.BasicProperties.MessageId))
             {
-                messageUid = Guid.NewGuid();
+                _ = Guid.TryParse(args.BasicProperties.MessageId, out messageUid);
             }
 
             message.Uuid = messageUid;
@@ -543,12 +543,11 @@ namespace DaJet.RabbitMQ
         {
             V11.IncomingMessage message = IncomingMessageDataMapper.Create(_version) as V11.IncomingMessage;
 
-            Guid messageUid = Guid.Empty;
+            Guid messageUid = Guid.NewGuid();
 
-            if (!string.IsNullOrEmpty(args.BasicProperties.MessageId) &&
-                !Guid.TryParse(args.BasicProperties.MessageId, out messageUid))
+            if (!string.IsNullOrWhiteSpace(args.BasicProperties.MessageId))
             {
-                messageUid = Guid.NewGuid();
+                _ = Guid.TryParse(args.BasicProperties.MessageId, out messageUid);
             }
 
             message.Uuid = messageUid;
@@ -578,12 +577,11 @@ namespace DaJet.RabbitMQ
         {
             V12.IncomingMessage message = IncomingMessageDataMapper.Create(_version) as V12.IncomingMessage;
 
-            Guid messageUid = Guid.Empty;
+            Guid messageUid = Guid.NewGuid();
 
-            if (!string.IsNullOrEmpty(args.BasicProperties.MessageId) &&
-                !Guid.TryParse(args.BasicProperties.MessageId, out messageUid))
+            if (!string.IsNullOrWhiteSpace(args.BasicProperties.MessageId))
             {
-                messageUid = Guid.NewGuid();
+                _ = Guid.TryParse(args.BasicProperties.MessageId, out messageUid);
             }
 
             message.Uuid = messageUid;
